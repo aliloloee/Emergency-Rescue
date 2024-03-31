@@ -1,3 +1,10 @@
-from django.contrib import admin
+from django.contrib.gis import admin
+from agents.models import Point
+from leaflet.admin import LeafletGeoAdmin
 
-# Register your models here.
+
+@admin.register(Point)
+class PointAdmin(LeafletGeoAdmin) :
+    list_display = ('name', 'location')
+
+
