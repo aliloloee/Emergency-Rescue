@@ -1,5 +1,6 @@
 from pathlib import Path
 from decouple import config 
+from datetime import timedelta
 from django.utils.translation import gettext_lazy as _
 
 
@@ -27,12 +28,16 @@ INSTALLED_APPS = [
     'django.contrib.gis',
 
     # third-party
+    'rest_framework',
     'leaflet',
 
     # local apps
     'accounts',
     'profiles',
-    'agents'
+    'agents',
+
+    # swagger
+    'drf_yasg',
 ]
 
 MIDDLEWARE = [
@@ -140,6 +145,48 @@ MEDIA_URL = '/media/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+# REST FRAMEWORK SETTINGS
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}
+
+# SWAGGER SETTINGS
+SWAGGER_SETTINGS = {
+    "DEFAULT_MODEL_RENDERING": "example",
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+                'type': 'apiKey',
+                'name': 'Authorization',
+                'in': 'header'
+        }
+    }
+}
+
+# JWT CONFIGURATION
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=300),
+
+    'SIGNING_KEY': SECRET_KEY,
+
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
+
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
+
+    'JTI_CLAIM': 'jti',
+}
+
+
+
+############# APP Settings #############
 
 # LOCAL APP CONFIGS (STATIC VARIABLES, CONSTANTS, ....)
 NORMAL           = 1, _('NORMAL')
