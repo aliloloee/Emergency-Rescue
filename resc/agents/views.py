@@ -19,7 +19,7 @@ class LifeAPIView(generics.GenericAPIView):
     serializer_class = serializers.LifeSerializer
 
     def post(self, request):
-        serializer = self.serializer_class(data=request.data)
+        serializer = self.serializer_class(context = {'request':request}, data=request.data)
 
         if serializer.is_valid(raise_exception=True):
             serializer.save()

@@ -1,5 +1,5 @@
 from django.contrib.gis import admin
-from agents.models import Point, Region
+from agents.models import Point, Region, LifeData
 from leaflet.admin import LeafletGeoAdmin
 
 
@@ -11,3 +11,7 @@ class PointAdmin(LeafletGeoAdmin) :
 @admin.register(Region)
 class RegionAdmin(LeafletGeoAdmin):
     list_display = ('name', )
+
+@admin.register(LifeData)
+class RegionAdmin(LeafletGeoAdmin):
+    list_display = ('heartrate', )

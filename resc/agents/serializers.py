@@ -17,8 +17,10 @@ class LifeSerializer(serializers.ModelSerializer) :
     def create(self, validated_data):
         latt, long, user = validated_data.pop('lattitude'), validated_data.pop('longitude'), self.context['request'].user
         point = Point((latt, long))
+        validated_data['user'] = user
+        validated_data['location'] = point
 
-        instance = super().create(user=user, location=point, **validated_data)
+        instance = super().create(validated_data)
         instance.save()
         return instance
 
