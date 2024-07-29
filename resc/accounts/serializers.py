@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.utils.translation import gettext_lazy as _
+
 
 
 User = get_user_model()
@@ -32,6 +34,4 @@ class RegisterUserSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop('confirm_password', None)
-        instance = super().create(validated_data)
-        instance.save()
-        return instance
+        return User.objects.create_user(**validated_data)

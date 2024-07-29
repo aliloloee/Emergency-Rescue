@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework import mixins, viewsets
 from rest_framework.permissions import IsAuthenticated
 from django.views.generic import TemplateView
-from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.http import HttpResponseForbidden
 from django.utils.translation import get_language
 from django.conf import settings
@@ -32,18 +32,9 @@ class LifeAPIView(generics.GenericAPIView):
             )
 
 
-class MainBoard(LoginRequiredMixin, TemplateView) :
+class MainBoard(LoginRequiredMixin, UserPassesTestMixin, TemplateView) :
     template_name = "main.html"
 
-    def get_template_names(self):
-        user = self.request.user
-
-        if user.profile.type == ProfileType.EMERGENCY_CENTER :
-            return ["main.html"]
-
-        else: # --> needs to be updated
-            return ["main.html"]
-        
     def get_context_data(self, **kwargs) :
         context = super().get_context_data(**kwargs)
         user = self.request.user
@@ -62,6 +53,9 @@ class MainBoard(LoginRequiredMixin, TemplateView) :
         context['emergencyLat'] = location.y
         context['emergencyLng'] = location.x
         return context
+    
+    def test_func(self):
+        return self.request.user.is_authenticated and self.request.user.profile.type == ProfileType.EMERGENCY_CENTER
 
     def handle_no_permission(self):
         return HttpResponseForbidden("You are not allowed to access this page.")

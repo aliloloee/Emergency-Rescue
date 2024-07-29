@@ -145,6 +145,12 @@ MEDIA_URL = '/media/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+# Http authentication
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/agent/dashboard/'  # or any other URL you want to redirect after login
+LOGOUT_REDIRECT_URL = '/'  # or any other URL you want to redirect after logout
+
+
 # REST FRAMEWORK SETTINGS
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
