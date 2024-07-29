@@ -11,39 +11,60 @@
         height: 100%;
         margin: 0;
     }
-    #map {
-        height: calc(100% - 20px);
-        width: calc(100% - 20px); 
+    body {
+        display: flex;
+    }
+    #left-panel {
+        flex: 1 1 75%; /* Grow, shrink, basis */
+        max-width: 75%; /* Ensures left panel is at most 75% of the page width */
         padding: 10px;
+    }
+    #map {
+        height: 100%;
+        width: 100%;
+    }
+    #right-panel {
+        flex: 1 1 25%; /* Grow, shrink, basis */
+        padding: 10px;
+        background-color: #f0f0f0; /* Optional: Background color for the right panel */
     }
 </style>
 
-<div id="map"></div>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            var centerLat = {{ center_lat }};
-            var centerLng = {{ center_lng }};
-            var emrgencyLat = {{ emergencyLat }};
-            var emrgencyLng = {{ emergencyLng }};
-            var bounds = [
-                [{{ bounds.1 }}, {{ bounds.0 }}],  // Southwest corner (minLat, minLng)
-                [{{ bounds.3 }}, {{ bounds.2 }}]   // Northeast corner (maxLat, maxLng)
-            ];
-
-            var map = L.map('map').setView([centerLat, centerLng], 12);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-            // Set the view to fit the bounds
-           // map.fitBounds(bounds);
+<div id="left-panel">
+    <div id="map"></div>
+</div>
+<div id="right-panel">
+    <!-- Content for the right panel goes here -->
+    <h1>Right Panel</h1>
+    <p>This is the right panel content.</p>
+</div>
 
 
-            // Add a marker at the center
-            var marker = L.marker([emrgencyLat, emrgencyLng]).addTo(map);
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var centerLat = {{ center_lat }};
+        var centerLng = {{ center_lng }};
+        var emrgencyLat = {{ emergencyLat }};
+        var emrgencyLng = {{ emergencyLng }};
+        var bounds = [
+            [{{ bounds.1 }}, {{ bounds.0 }}],  // Southwest corner (minLat, minLng)
+            [{{ bounds.3 }}, {{ bounds.2 }}]   // Northeast corner (maxLat, maxLng)
+        ];
 
-            // Add a popup to the marker
-            marker.bindPopup("<b>Center of Polygon</b><br>This is the centroid of the polygon.").openPopup();
-        });
-    </script>
+        var map = L.map('map').setView([centerLat, centerLng], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        // Set the view to fit the bounds
+        // map.fitBounds(bounds);
+
+
+        // Add a marker at the center
+        var marker = L.marker([emrgencyLat, emrgencyLng]).addTo(map);
+
+        // Add a popup to the marker
+        marker.bindPopup("<b>Center of Polygon</b><br>This is the centroid of the polygon.").openPopup();
+    });
+</script>
 
 
 {% endblock %}
