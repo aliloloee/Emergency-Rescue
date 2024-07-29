@@ -2,7 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from profiles import utils
-from agents.models import Region
+from agents.models import Region, Point
 
 
 User = get_user_model()
@@ -13,9 +13,15 @@ class Profile(models.Model) :
                             null=True, blank=True,
                             related_name='profile', verbose_name=_('User')
                             )
-    
-    region = models.ForeignKey(Region, on_delete=models.SET_NULL, related_name='regions',
-                            null=True, blank=True, verbose_name=_('Region'))
+
+    location = models.ForeignKey(Point, on_delete=models.CASCADE,
+                            null=True, blank=True,
+                            related_name='profiles', verbose_name=_('Location')
+                            )
+
+    region = models.ForeignKey(Region, on_delete=models.SET_NULL, related_name='profiles',
+                            null=True, blank=True, verbose_name=_('Region')
+                            )
 
     type = models.PositiveSmallIntegerField(
                             choices=utils.ProfileType.choices, default=utils.ProfileType.NORMAL,

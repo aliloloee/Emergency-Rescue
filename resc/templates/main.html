@@ -6,12 +6,43 @@
 
 
 {% block content %}
+<style>
+    html, body {
+        height: 100%;
+        margin: 0;
+    }
+    #map {
+        height: calc(100% - 20px);
+        width: calc(100% - 20px); 
+        padding: 10px;
+    }
+</style>
 
-<div id="map" style="height: 400px;"></div>
+<div id="map"></div>
     <script>
-        var map = L.map('map').setView([51.505, -0.09], 13); // Set initial view to London
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map); // Add OpenStreetMap tiles
-        // You can dynamically add markers here using Django template tags and data from your Django model
+        document.addEventListener('DOMContentLoaded', function() {
+            var centerLat = {{ center_lat }};
+            var centerLng = {{ center_lng }};
+            var emrgencyLat = {{ emergencyLat }};
+            var emrgencyLng = {{ emergencyLng }};
+            var bounds = [
+                [{{ bounds.1 }}, {{ bounds.0 }}],  // Southwest corner (minLat, minLng)
+                [{{ bounds.3 }}, {{ bounds.2 }}]   // Northeast corner (maxLat, maxLng)
+            ];
+
+            var map = L.map('map').setView([centerLat, centerLng], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+            // Set the view to fit the bounds
+           // map.fitBounds(bounds);
+
+
+            // Add a marker at the center
+            var marker = L.marker([emrgencyLat, emrgencyLng]).addTo(map);
+
+            // Add a popup to the marker
+            marker.bindPopup("<b>Center of Polygon</b><br>This is the centroid of the polygon.").openPopup();
+        });
     </script>
 
 
