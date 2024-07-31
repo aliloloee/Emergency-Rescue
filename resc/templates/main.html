@@ -6,6 +6,8 @@
 
 
 {% block content %}
+<link rel="stylesheet" href="{% static 'awesome.markers.css' %}">
+
 <style>
     html, body {
         height: 100%;
@@ -28,6 +30,9 @@
         padding: 10px;
         background-color: #f0f0f0; /* Optional: Background color for the right panel */
     }
+    button {
+            margin-top: 20px;
+    }
 </style>
 
 <div id="left-panel">
@@ -37,8 +42,11 @@
     <!-- Content for the right panel goes here -->
     <h1>Right Panel</h1>
     <p>This is the right panel content.</p>
+    <button id="myButton">Scan the region</button>
 </div>
 
+
+<script src="{% static 'awesome.markers.js' %}"></script>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -57,12 +65,25 @@
         // Set the view to fit the bounds
         // map.fitBounds(bounds);
 
+        // Define a custom icon using Leaflet.AwesomeMarkers
+        var awesomeIcon = L.AwesomeMarkers.icon({
+                icon: 'star', // Icon class (e.g., star, coffee, etc.)
+                markerColor: 'blue', // Color of the marker
+                prefix: 'fa' // Font Awesome prefix (if using Font Awesome icons)
+        });
 
         // Add a marker at the center
-        var marker = L.marker([emrgencyLat, emrgencyLng]).addTo(map);
+        var marker = L.marker([emrgencyLat, emrgencyLng], {icon: awesomeIcon}).addTo(map);
 
         // Add a popup to the marker
         marker.bindPopup("<b>Center of Polygon</b><br>This is the centroid of the polygon.").openPopup();
+
+        // Add event listener to the button
+        var button = document.getElementById('myButton');
+        button.addEventListener('click', function() {
+            console.log('Random String: ' + Math.random().toString(36).substring(7));
+            button.disabled = true;
+        });
     });
 </script>
 
