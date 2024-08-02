@@ -73,7 +73,8 @@ TEMPLATES = [
 AUTH_USER_MODEL = 'accounts.User'
 
 
-WSGI_APPLICATION = 'resc.wsgi.application'
+# WSGI_APPLICATION = 'resc.wsgi.application'
+ASGI_APPLICATION = 'resc.asgi.application'
 
 
 # A crucial step for working with postgis data on windows
