@@ -3,11 +3,19 @@ from django.contrib.gis import admin
 from django.contrib.auth import get_user_model
 from leaflet.admin import LeafletGeoAdmin
 
-from agents.models import Point, Region, Agent, Mission, LifeData
+from agents.models import Point, Region, Agent, AgentDevice, SubjectDevice, AgentRecords, SubjectRecords, Mission
 from profiles.models import Profile
 from profiles.utils import ProfileType
 
 User = get_user_model()
+
+def fetch_ids_of_normal_users() :
+    normal_profiles = Profile.objects.filter(type=ProfileType.NORMAL)
+    corresponding_users = User.objects.filter(id__in=normal_profiles.values('user_id'))
+    return corresponding_users
+
+normal_users = fetch_ids_of_normal_users()
+
 
 class AgentAdminForm(forms.ModelForm):
     class Meta:
@@ -27,9 +35,16 @@ class MissionAdminForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        normal_profiles = Profile.objects.filter(type=ProfileType.NORMAL)
-        corresponding_users = User.objects.filter(id__in=normal_profiles.values('user_id'))
-        self.fields['subject'].queryset = corresponding_users
+        self.fields['subject'].queryset = normal_users
+
+class SubjectDeviceAdminForm(forms.ModelForm):
+    class Meta:
+        model = SubjectDevice
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['subject'].queryset = normal_users
 
 
 @admin.register(Point)
@@ -47,13 +62,16 @@ class AgentAdmin(LeafletGeoAdmin) :
     form = AgentAdminForm
     list_display = ('name', )
 
+@admin.register(SubjectDevice)
+class SubjectDeviceAdmin(LeafletGeoAdmin) :
+    form = SubjectDeviceAdminForm
+
+admin.site.register(AgentDevice)
+admin.site.register(SubjectRecords)
+admin.site.register(AgentRecords)
+
 
 @admin.register(Mission)
 class MissionAdmin(LeafletGeoAdmin) :
     form = MissionAdminForm
 
-
-# Is this needed ?
-@admin.register(LifeData)
-class RegionAdmin(LeafletGeoAdmin):
-    list_display = ('heartrate', )

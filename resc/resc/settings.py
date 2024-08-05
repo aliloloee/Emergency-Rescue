@@ -204,6 +204,19 @@ EMERGENCY_CENTER = 2, _('EMERGENCY_CENTER')
 SUPER            = 3, _('SUPER')
 
 # STATUS OF MISSIONS
-IN_PROGRESS   = 1, _('IN_PROGRESS')
-SUCCESS       = 2, _('SUCCESS')
-FAILURE       = 3, _('FAILURE')
+JUST_DEFINED  = 1, _('JUST_DEFINED')
+IN_PROGRESS   = 2, _('IN_PROGRESS')
+SUCCESS       = 3, _('SUCCESS')
+FAILURE       = 4, _('FAILURE')
+
+# SETTING FOR CREATING API_KEY OF THE DEVICE
+DEVICE_API_KEY_SETTINGS = {
+    'MESSAGE_LOWER_BAND': 20,
+    'MESSAGE_UPPER_BAND': 30,
+    'HASHING_METHOD': 'default',   # 'default' to use django make_password for hashing
+    # 'HASHING_METHOD': 'sha3_256' # 'sha3_256' to use this algorithm for hashing 
+}
+
+# REQUIRED KEYS FOR AGENTS AND SUBJECT TO BE RECORDED
+SUBJECT_REQUIRED_KEYS = {"latt", "long", "heartrate"}
+AGENT_REQUIRED_KEYS = {"latt", "long"}

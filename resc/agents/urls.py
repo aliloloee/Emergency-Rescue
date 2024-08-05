@@ -6,5 +6,4 @@ app_name = 'agents'
 
 urlpatterns = [
     path('dashboard/', views.MainBoard.as_view(), name='main'),
-    path('api/life/', views.LifeAPIView.as_view(), name='api-life'),
 ]

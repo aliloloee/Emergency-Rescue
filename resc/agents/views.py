@@ -15,23 +15,6 @@ from agents import serializers
 from profiles.utils import ProfileType
 
 
-class LifeAPIView(generics.GenericAPIView):
-
-    permission_classes = (IsAuthenticated, )
-    serializer_class = serializers.LifeSerializer
-
-    def post(self, request):
-        serializer = self.serializer_class(context = {'request':request}, data=request.data)
-
-        if serializer.is_valid(raise_exception=True):
-            serializer.save()
-
-            return Response(
-                _('Life data saved'),
-                status = status.HTTP_201_CREATED
-            )
-
-
 class MainBoard(LoginRequiredMixin, UserPassesTestMixin, TemplateView) :
     template_name = "main.html"
 
