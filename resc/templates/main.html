@@ -52,31 +52,44 @@
     document.addEventListener('DOMContentLoaded', function() {
         var centerLat = {{ center_lat }};
         var centerLng = {{ center_lng }};
-        var emrgencyLat = {{ emergencyLat }};
-        var emrgencyLng = {{ emergencyLng }};
         var bounds = [
             [{{ bounds.1 }}, {{ bounds.0 }}],  // Southwest corner (minLat, minLng)
             [{{ bounds.3 }}, {{ bounds.2 }}]   // Northeast corner (maxLat, maxLng)
         ];
 
-        var map = L.map('map').setView([centerLat, centerLng], 12);
+        var locations = {{ locations|safe }};
+
+        var map = L.map('map').setView([centerLat, centerLng], 14);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
         // Set the view to fit the bounds
         // map.fitBounds(bounds);
 
         // Define a custom icon using Leaflet.AwesomeMarkers
-        var awesomeIcon = L.AwesomeMarkers.icon({
+        var selfCenterIcon = L.AwesomeMarkers.icon({
                 icon: 'star', // Icon class (e.g., star, coffee, etc.)
-                markerColor: 'blue', // Color of the marker
-                prefix: 'fa' // Font Awesome prefix (if using Font Awesome icons)
+                markerColor: 'red',
+                prefix: 'fa',
         });
 
-        // Add a marker at the center
-        var marker = L.marker([emrgencyLat, emrgencyLng], {icon: awesomeIcon}).addTo(map);
+        var otherCenterIcon = L.AwesomeMarkers.icon({
+                icon: 'star',
+                markerColor: 'blue',
+                prefix: 'fa'
+        });
 
-        // Add a popup to the marker
-        marker.bindPopup("<b>Center of Polygon</b><br>This is the centroid of the polygon.").openPopup();
+        locations.forEach(function(location) {
+            var locLat = location[0];
+            var locLng = location[1];
+            var userStr = location[2];
+            if (location.length === 4) {
+                var otherMarker = L.marker([locLat, locLng], {icon: selfCenterIcon}).addTo(map);
+                otherMarker.bindPopup("<b>" + userStr + "</b><br>This is another location.");
+            } else {
+                var otherMarker = L.marker([locLat, locLng], {icon: otherCenterIcon}).addTo(map);
+                otherMarker.bindPopup("<b>" + userStr + "</b><br>This is another location.");
+            }
+        });
 
         // Add event listener to the button
         var button = document.getElementById('myButton');

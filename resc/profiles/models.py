@@ -8,6 +8,14 @@ from agents.models import Region, Point
 User = get_user_model()
 
 class Profile(models.Model) :
+
+    class EmergencyCenters(models.Manager) :
+        def get_centers_in_local_region(self, region):
+            return (super().get_queryset()
+                    .filter(type=utils.ProfileType.EMERGENCY_CENTER)
+                    .filter(region=region)
+                    .order_by('created'))
+
     user = models.OneToOneField(
                             User, on_delete=models.CASCADE, unique=True,
                             null=True, blank=True,
@@ -32,6 +40,9 @@ class Profile(models.Model) :
     phone   = models.CharField(null=True, blank=True, max_length=30, verbose_name=_('Phone number'))
     city    = models.CharField(null=True, blank=True, max_length=50, verbose_name=_('City'))
     postal  = models.CharField(null=True, blank=True, max_length=50, verbose_name=_('Postal code'))
+
+    objects = models.Manager()
+    center_objects = EmergencyCenters()
 
     created = models.DateTimeField(auto_now_add=True, verbose_name=_('Created'))
     updated = models.DateTimeField(auto_now=True, verbose_name=_('Updated'))
