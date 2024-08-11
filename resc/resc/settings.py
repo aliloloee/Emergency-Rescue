@@ -253,8 +253,8 @@ DEVICE_API_KEY_SETTINGS = {
 }
 
 # REQUIRED KEYS FOR AGENTS AND SUBJECT TO BE RECORDED
-SUBJECT_REQUIRED_KEYS = {"latt", "long", "heartrate"}
-AGENT_REQUIRED_KEYS = {"latt", "long"}
+SUBJECT_REQUIRED_KEYS = {"lat", "lng", "heartrate", "timestamp"}
+AGENT_REQUIRED_KEYS = {"lat", "lng", "timestamp"}
 
 
 # DEVICE HEADERS FOR WEBSOCKETS

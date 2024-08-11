@@ -28,7 +28,9 @@ class CustomAuthMiddleWare:
 
             # Fetch the device using the API key
             device = await self.get_device(api_key=api_key)
+            region = await self.get_region(user=device.subject)
             scope["device"] = device
+            scope["region"] = region
 
         except AuthenticationFailed as e:
             # Handle the authentication failure
@@ -66,4 +68,8 @@ class CustomAuthMiddleWare:
             raise AuthenticationFailed(_("Device not found"), code="device_not_found")
 
         return device
+    
+    @database_sync_to_async
+    def get_region(self, user) :
+        return user.profile.region
 
