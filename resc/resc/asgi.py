@@ -1,8 +1,9 @@
 import os
 import django
+from decouple import config 
 
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'resc.settings')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', config('DJANGO_SETTINGS_MODULE'))
 django.setup()
 
 

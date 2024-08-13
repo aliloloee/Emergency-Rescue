@@ -11,7 +11,7 @@ services:
     networks:
       - app-network
 
-  redis:
+  ram:
     image: redis:alpine
     networks:
       - app-network
@@ -32,7 +32,7 @@ services:
     #   - "8000:8000"
     depends_on:
       - db
-      - redis
+      - ram
     networks:
       - app-network
 
