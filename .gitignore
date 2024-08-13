@@ -7,6 +7,10 @@ __pycache__/
 
 /static/
 static
+staticfiles
+/staticfiles/
+staticfiles/
+
 
 help.txt
 docker-commands.bat
