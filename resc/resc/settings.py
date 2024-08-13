@@ -13,7 +13,7 @@ STATIC_DIR = BASE_DIR / 'static'
 SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG')
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]']
 
 
 # Application definition
@@ -93,8 +93,8 @@ USE_TZ = True
 # GDAL Configuration and Installation on Windows for Django Projects
 # https://medium.com/@limeira.felipe94/gdal-configuration-and-installation-on-windows-for-django-projects-538171db5ccc
 
-GDAL_LIBRARY_PATH = r"C:\Users\Ali\Desktop\Emergency Rescue\venv\Lib\site-packages\osgeo\gdal304.dll"
-GEOS_LIBRARY_PATH = r"C:\Users\Ali\Desktop\Emergency Rescue\venv\Lib\site-packages\osgeo\geos_c.dll"
+# GDAL_LIBRARY_PATH = r"C:\Users\Ali\Desktop\Emergency Rescue\venv\Lib\site-packages\osgeo\gdal304.dll"
+# GEOS_LIBRARY_PATH = r"C:\Users\Ali\Desktop\Emergency Rescue\venv\Lib\site-packages\osgeo\geos_c.dll"
 
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
