@@ -4,3 +4,4 @@ venv/
 *.pyd
 __pycache__/
 .git/
+help.txt

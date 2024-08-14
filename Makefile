@@ -17,17 +17,20 @@ volumes:
 	docker volume create $(DOCKER_VOLUME1)
 	docker volume create $(DOCKER_VOLUME2)
 
+collectstatics:
+	docker-compose exec web python3 /app/resc/manage.py collectstatic --noinput
+
 logs:
 	docker-compose logs
 
 migrate:
-	docker-compose exec api python3 manage.py migrate --noinput
+	docker-compose exec web python3 manage.py migrate --noinput
 
 makemigrations:
-	docker-compose exec api python3 manage.py makemigrations
+	docker-compose exec web python3 manage.py makemigrations
 
 superuser:
-	docker-compose exec api python3 manage.py createsuperuser	
+	docker-compose exec web python3 manage.py createsuperuser	
 
 down-v:
 	docker-compose down -v	
