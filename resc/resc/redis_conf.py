@@ -1,18 +1,16 @@
 import redis
 import os
 
+from decouple import config 
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'resc.settings')
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', config('DJANGO_SETTINGS_MODULE'))
 
 
 class Redis() :
-    """
-    ** Future neccessary update :
-    settings file needs to become a module containing developement and production files
-    based on the mode, whether developement or production, the configs of self.db in this class should change
-    """
     def __init__(self) :
-        self.db = redis.Redis(host='localhost', port=6379, db=1)
+        host = 'localhost' if os.environ.get('DJANGO_SETTINGS_MODULE') == 'resc.settings.developement' else config('REDIS_HOST')
+        self.db = redis.Redis(host=host, port=6379, db=1)
 
     def check_key_value_validity(self, key, value) :
         try :
