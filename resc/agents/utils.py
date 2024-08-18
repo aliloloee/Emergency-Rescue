@@ -53,14 +53,12 @@ class CustomJSONField(models.JSONField):
             
             if set(item.keys()) != self.required_keys:
                 raise ValidationError(f'Each dictionary must contain exactly these keys: {self.required_keys}')
-            for key in self.required_keys:
-                if not isinstance(item[key], (int, float)):
-                    raise ValidationError(f'The value for {key} must be a number.')
 
-    def from_db_value(self, value, expression, connection):
-        if value is None:
-            return value
-        return json.loads(value)
+    # def from_db_value(self, value, expression, connection):
+    #     if value is None:
+    #         return value
+    #     return value
+    #     # return json.loads(value)
 
     def to_python(self, value):
         if isinstance(value, str):
@@ -73,5 +71,5 @@ class CustomJSONField(models.JSONField):
 
     def get_prep_value(self, value):
         self.validate_structure(value)
-        return json.dumps(value)
+        return value
 

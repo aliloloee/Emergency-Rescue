@@ -49,7 +49,17 @@ class SubjectDeviceAdminForm(forms.ModelForm):
 
 @admin.register(Point)
 class PointAdmin(LeafletGeoAdmin) :
-    list_display = ('name', )
+    list_display = ('name', 'latitude', 'longitude')
+    readonly_fields = ('latitude', 'longitude')
+    
+    def latitude(self, obj):
+        return obj.location.y if obj.location else None
+    
+    def longitude(self, obj):
+        return obj.location.x if obj.location else None
+
+    latitude.short_description = 'Latitude'
+    longitude.short_description = 'Longitude'
 
 
 @admin.register(Region)

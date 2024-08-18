@@ -17,7 +17,8 @@ class CustomAuthMiddleWare:
         try:
             # Ensure header is present
             header_key = settings.DEVICE_HEADER_NAME_WS.encode('utf-8')
-            if header_key not in scope['headers']:
+            header_exists = any(header[0] == header_key for header in scope['headers'])
+            if not header_exists:
                 raise AuthenticationFailed(_("Authorization header is missing"), code="authorization_header_missing")
 
             # Retrieve and validate the header
@@ -28,7 +29,7 @@ class CustomAuthMiddleWare:
 
             # Fetch the device using the API key
             device = await self.get_device(api_key=api_key)
-            region = await self.get_region(user=device.subject)
+            region = await self.get_region(device=device)
             scope["device"] = device
             scope["region"] = region
 
@@ -70,6 +71,6 @@ class CustomAuthMiddleWare:
         return device
     
     @database_sync_to_async
-    def get_region(self, user) :
-        return user.profile.region
+    def get_region(self, device) :
+        return device.subject.profile.region
 
