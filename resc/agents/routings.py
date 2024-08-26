@@ -4,5 +4,5 @@ from agents import consumers
 
 
 websocket_urlpatterns = [
-    path('ws/subject/send/', consumers.AliveSubjectConsumer.as_asgi(), name='subject-data')
+    path('ws/subject/send/', consumers.AliveSubjectConsumer.as_asgi(), name='ws-subject-data'),
 ]

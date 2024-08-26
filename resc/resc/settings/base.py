@@ -157,6 +157,11 @@ SIMPLE_JWT = {
     'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
 
     'JTI_CLAIM': 'jti',
+
+    ## For customizing the login process for User with type of Emergency-center 
+    "ACCESS_TOKEN_NAME": "access_token",
+    "REFRESH_TOKEN_NAME": "refresh_token",
+    "JWT_COOKIE_SAMESITE": "Lax",
 }
 
 
@@ -188,7 +193,8 @@ SUBJECT_REQUIRED_KEYS = {"lat", "lng", "heartrate", "timestamp"}
 AGENT_REQUIRED_KEYS = {"lat", "lng", "timestamp"}
 
 
-# DEVICE HEADERS FOR WEBSOCKETS
+# WEBSOCKETS CONFIGS
 DEVICE_HEADER_NAME_WS = 'device'
-DEVICE_HEADER_TYPES = ('Resc', )
+JWT_HEADER_NAME_WS = 'user'
+HEADER_TYPES = ('Resc', )
 

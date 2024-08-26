@@ -5,12 +5,19 @@ from django.utils.translation import gettext_lazy as _
 from resc.redis_conf import RSCREDIS
 from agents.models import SubjectRecords
 from agents.tasks import export_from_redis_to_db
+from agents.mixinx import AliveSubjectAuthMixin
 
 import json
 
 
+class AgentSendConsumer(AsyncWebsocketConsumer):
+    pass
 
-class AliveSubjectConsumer(AsyncWebsocketConsumer):
+class EmergencyReceiveConsumer(AsyncWebsocketConsumer):
+    pass
+
+
+class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -19,6 +26,8 @@ class AliveSubjectConsumer(AsyncWebsocketConsumer):
         self.queue_size = 100
 
     async def connect(self):
+        await super().connect()
+
         self.device = self.scope["device"]
         self.region = self.scope["region"]
 

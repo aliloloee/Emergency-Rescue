@@ -1,10 +1,49 @@
+from django.contrib.auth.views import LoginView
+from django.urls import reverse_lazy
+from django.conf import settings
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.tokens import RefreshToken
 from accounts import serializers
 from accounts.permissions import AnyOnPost_AuthOnGet
 
+
+class CustomLoginView(LoginView):
+    template_name = 'login.html'
+    success_url = reverse_lazy('agents:main')
+
+    def make_tokens(self, user) :
+        refresh = RefreshToken.for_user(user)
+        
+        return {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        user = self.request.user
+        data = self.make_tokens(user=user)
+
+        response.set_cookie(
+                settings.SIMPLE_JWT["REFRESH_TOKEN_NAME"],
+                data["refresh"],
+                max_age=settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"],
+                httponly=True,
+                samesite=settings.SIMPLE_JWT["JWT_COOKIE_SAMESITE"],
+            )
+        
+        response.set_cookie(
+                settings.SIMPLE_JWT["ACCESS_TOKEN_NAME"],
+                data["access"],
+                max_age=settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"],
+                httponly=True,
+                samesite=settings.SIMPLE_JWT["JWT_COOKIE_SAMESITE"],
+            )
+
+        return response
 
 
 class RegisterAPIView(generics.CreateAPIView) :
