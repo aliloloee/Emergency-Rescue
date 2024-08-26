@@ -1,13 +1,18 @@
 from django.contrib.auth.views import LoginView
 from django.urls import reverse_lazy
 from django.conf import settings
+from django.contrib.auth import logout
+from django.shortcuts import redirect
+from django.views.generic import View
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from accounts import serializers
 from accounts.permissions import AnyOnPost_AuthOnGet
+
 
 
 class CustomLoginView(LoginView):
@@ -95,3 +100,49 @@ class CustomTokenRefreshView(TokenRefreshView):
     # @swagger_auto_schema(**schemas['CustomTokenRefreshViewSchema'])
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
+
+
+class JWTSetCookieMixin:
+    def finalize_response(self, request, response, *args, **kwargs):
+        if response.data.get("refresh"):
+            response.set_cookie(
+                settings.SIMPLE_JWT["REFRESH_TOKEN_NAME"],
+                response.data["refresh"],
+                max_age=settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"],
+                httponly=True,
+                samesite=settings.SIMPLE_JWT["JWT_COOKIE_SAMESITE"],
+            )
+        if response.data.get("access"):
+            response.set_cookie(
+                settings.SIMPLE_JWT["ACCESS_TOKEN_NAME"],
+                response.data["access"],
+                max_age=settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"],
+                httponly=True,
+                samesite=settings.SIMPLE_JWT["JWT_COOKIE_SAMESITE"],
+            )
+            del response.data["access"]
+
+        return super().finalize_response(request, response, *args, **kwargs)
+
+
+class CustomBrowserRefreshToken(JWTSetCookieMixin, TokenRefreshView):
+    serializer_class = serializers.JWTCookieTokenRefreshSerializer
+
+    def post(self, request, *args, **kwargs):
+        try:
+            response = super().post(request, *args, **kwargs)
+            return response
+        except (InvalidToken, TokenError) as e:
+            return Response(
+                {"detail": "Invalid or expired token. Please log in again."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+
+class CustomLogoutView(View):
+    def get(self, request, *args, **kwargs):
+        logout(request)
+        response = redirect('accounts:login')
+        response.delete_cookie(settings.SIMPLE_JWT['ACCESS_TOKEN_NAME'])
+        response.delete_cookie(settings.SIMPLE_JWT['REFRESH_TOKEN_NAME'])
+        return response
