@@ -46,7 +46,82 @@
 </div>
 
 
+<!-- ************************ JavaScript /************************ -->
+<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 <script src="{% static 'awesome.markers.js' %}"></script>
+
+<script>
+    const DJANGO_SETTINGS_MODULE = "{{ DJANGO_SETTINGS_MODULE }}";
+    let baseURL;
+
+    if (DJANGO_SETTINGS_MODULE === 'myproject.settings.development') {
+        baseURL = 'http://127.0.0.1:8000';
+    } else if (DJANGO_SETTINGS_MODULE === 'myproject.settings.production') {
+        baseURL = 'localhost';
+}
+</script>
+
+
+<script>
+    const axiosInstance = axios.create({
+        baseURL: baseURL,
+        withCredentials: true, // Ensure cookies are sent with requests
+    });
+
+    async function refreshAuthToken() {
+        try {
+            const response = await axios.post("{% url 'accounts:browser_token_refresh' %}", {}, { withCredentials: true });
+            console.log('Token refreshed successfully');
+            return response;
+        } catch (error) {
+            if (error.response && error.response.status === 401) {
+                window.location.href = "{% url 'accounts:logout' %}";
+            } else {
+                console.error('Error refreshing token:', error);
+            }
+        }
+    }
+
+    // Axios request interceptor to add access token to headers
+    axiosInstance.interceptors.request.use(
+        async (config) => {
+            // Optional: Add access token from cookie to the request headers, if needed
+            // (Only do this if your access token is not HttpOnly and accessible in JavaScript)
+
+            // config.headers['Authorization'] = `Bearer ${accessToken}`;
+            return config;
+        },
+        (error) => {
+            return Promise.reject(error);
+        }
+    );
+
+    // Axios response interceptor to handle token refresh on 401 errors
+    axiosInstance.interceptors.response.use(
+        (response) => {
+            // If the response is successful, just return the response
+            return response;
+        },
+        async (error) => {
+            const originalRequest = error.config;
+            
+            // If the response is a 401 and we haven't already retried, try refreshing the token
+            if (error.response && error.response.status === 401 && !originalRequest._retry) {
+                originalRequest._retry = true;
+                
+                const refreshResponse = await refreshAuthToken();
+                if (refreshResponse && refreshResponse.status === 200) {
+                    // Retry the original request with the new token
+                    return axiosInstance(originalRequest);
+                }
+            }
+
+            // If the token refresh failed, reject the promise with the error
+            return Promise.reject(error);
+        }
+    );
+</script>
+
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -91,32 +166,70 @@
             }
         });
 
-        // Add event listener to the button
-        var button = document.getElementById('myButton');
-        button.addEventListener('click', function() {
-            console.log('Random String: ' + Math.random().toString(36).substring(7));
-            button.disabled = true;
-        });
     });
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+
 <script>
-    async function refreshAuthToken() {
-        try {
-            const response = await axios.post("{% url 'accounts:browser_token_refresh' %}", { withCredentials: true });
-            console.log('Token refreshed successfully');
-            return response;
-        } catch (error) {
-            if (error.response && error.response.status === 401) {
-                window.location.href = "{% url 'accounts:logout' %}";
-            } else {
-                console.error('Error refreshing token:', error);
-            }
+    refreshAuthToken();
+</script>
+
+<script>
+function connectWebSocket() {
+    const socketUrl = 'ws://127.0.0.1:8000/ws/center/recieve/';
+    let socket = new WebSocket(socketUrl);
+
+    socket.onopen = async function() {
+        console.log('WebSocket connection established.');
+        // Optionally, you can send an initial message or authentication if needed
+    };
+
+    socket.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        console.log('Message received from server:', data);
+        // Handle the received data here
+    };
+
+    // Event listener for when the WebSocket connection closes
+    socket.onclose = function(event) {
+        console.log('WebSocket connection closed:', event.code);
+        // If the close event is due to an authentication issue, attempt to refresh the token
+        if (event.code === 4001) {
+            refreshAuthToken().then(() => {
+                connectWebSocket();
+            }).catch((error) => {
+                console.log('Error refreshing token:', error);
+                if (error.response && error.response.status === 401) {
+                    window.location.href = "{% url 'accounts:logout' %}";
+                }
+            });
+        }
+    };
+
+    // Event listener for errors
+    socket.onerror = function(error) {
+        console.error('WebSocket error:', error);
+    };
+
+    // Function to close the WebSocket connection gracefully
+    function closeWebSocket() {
+        if (socket) {
+            socket.close();
+            console.log('WebSocket connection closed manually.');
         }
     }
 
-    refreshAuthToken();
+    return socket;
+    // return {
+    //     closeWebSocket
+    // };
+}
+
+document.getElementById('myButton').addEventListener('click', function() {
+    console.log('Button clicked! Connecting to WebSocket...');
+    connectWebSocket();
+});
+
 </script>
 
 

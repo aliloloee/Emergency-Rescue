@@ -131,6 +131,7 @@ class CustomBrowserRefreshToken(JWTSetCookieMixin, TokenRefreshView):
     def post(self, request, *args, **kwargs):
         try:
             response = super().post(request, *args, **kwargs)
+            # print(self.serializer_class.validated_data)
             return response
         except (InvalidToken, TokenError) as e:
             return Response(

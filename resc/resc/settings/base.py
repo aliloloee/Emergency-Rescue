@@ -195,6 +195,6 @@ AGENT_REQUIRED_KEYS = {"lat", "lng", "timestamp"}
 
 # WEBSOCKETS CONFIGS
 DEVICE_HEADER_NAME_WS = 'device'
-JWT_HEADER_NAME_WS = 'user'
+# JWT_HEADER_NAME_WS = 'user'
 HEADER_TYPES = ('Resc', )
 

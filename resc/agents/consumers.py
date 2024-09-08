@@ -5,7 +5,7 @@ from django.utils.translation import gettext_lazy as _
 from resc.redis_conf import RSCREDIS
 from agents.models import SubjectRecords
 from agents.tasks import export_from_redis_to_db
-from agents.mixinx import AliveSubjectAuthMixin
+from agents.mixinx import AliveSubjectAuthMixin, JWTConsumerAuthMixin
 
 import json
 
@@ -13,8 +13,29 @@ import json
 class AgentSendConsumer(AsyncWebsocketConsumer):
     pass
 
-class EmergencyReceiveConsumer(AsyncWebsocketConsumer):
-    pass
+class EmergencyReceiveConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    async def connect(self):
+        await super().connect()
+
+        self.region = self.scope["region"]
+        self.region_group_name = f'region-{self.region.pk}'
+        await self.channel_layer.group_add(
+            self.region_group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+    async def disconnect(self, close_code=None):
+        await self.channel_layer.group_discard(self.region_group_name, self.channel_name)
+
+    async def echo(self, event) :
+        device_data = event['value']
+        print(device_data)
+        await self.send(text_data=json.dumps({'device_data': device_data}))
 
 
 class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
