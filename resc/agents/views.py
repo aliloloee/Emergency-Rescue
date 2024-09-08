@@ -1,10 +1,13 @@
 from django.views.generic import TemplateView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
-from django.http import HttpResponseForbidden
+from django.http import HttpResponseForbidden, JsonResponse
 from django.utils.translation import gettext_lazy as _
 
 from profiles.models import Profile
 from profiles.utils import ProfileType
+
+import os
+
 
 
 class MainBoard(LoginRequiredMixin, UserPassesTestMixin, TemplateView) :
@@ -47,4 +50,12 @@ class MainBoard(LoginRequiredMixin, UserPassesTestMixin, TemplateView) :
 
     def handle_no_permission(self):
         return HttpResponseForbidden("You are not allowed to access this page.")
+
+
+def js_config(requests):
+    context = {
+        'DJANGO_SETTINGS_MODULE' : os.environ.get('DJANGO_SETTINGS_MODULE')
+    }
+
+    return JsonResponse(context)
 
