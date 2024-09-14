@@ -34,7 +34,7 @@ class EmergencyReceiveConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
 
     async def echo(self, event) :
         device_data = event['value']
-        print(device_data)
+        # print(device_data)
         await self.send(text_data=json.dumps({'device_data': device_data}))
 
 

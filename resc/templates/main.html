@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load websocket_tags %}
 
 
 {% block title %}Emergency Rescue{% endblock %}
@@ -35,6 +36,8 @@
     var locations = {{ locations|safe }};
     var refreshTokenUrl = "{% url 'accounts:browser_token_refresh' %}";
     var logoutUrl = "{% url 'accounts:logout' %}";
+
+    var centerRecieveWS = "{% ws_url 'ws-center-data' %}";
 </script>
 
 <script src="{% static 'js/main.js' %}"></script>

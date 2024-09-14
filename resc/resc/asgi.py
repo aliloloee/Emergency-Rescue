@@ -11,7 +11,8 @@ from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 from channels.security.websocket import AllowedHostsOriginValidator
-from agents import routings as agents_routings
+from resc.utils import all_websocket_urlpatterns
+# from agents import routings as agents_routings
 # from agents.middleware import CustomAuthMiddleWare
 
 
@@ -22,7 +23,7 @@ application = ProtocolTypeRouter({
     "websocket": AllowedHostsOriginValidator(
         AuthMiddlewareStack(
             URLRouter(
-                agents_routings.websocket_urlpatterns
+                all_websocket_urlpatterns
             )
         )
     ),

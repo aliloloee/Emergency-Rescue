@@ -198,3 +198,7 @@ DEVICE_HEADER_NAME_WS = 'device'
 # JWT_HEADER_NAME_WS = 'user'
 HEADER_TYPES = ('Resc', )
 
+
+# Django Channels Routigs Config
+CHANNELS_ROUTING_NAME = 'routings'
+CHANNELS_URL_PATTERN = 'websocket_urlpatterns'
