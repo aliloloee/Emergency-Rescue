@@ -7,7 +7,7 @@ from rest_framework import HTTP_HEADER_ENCODING
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from channels.db import database_sync_to_async
 
-from agents.models import SubjectDevice
+from agents.models import SubjectDevice, AgentDevice
 
 import jwt
 
@@ -97,6 +97,14 @@ class AliveSubjectAuthMixin(BaseAuthMixin):
         except AuthenticationFailed as e:
             await self.close(code=4001)
             return
+
+
+class AgentAuthMixin(AliveSubjectAuthMixin):
+    device_model = AgentDevice
+
+    @database_sync_to_async
+    def get_region(self, device):
+        return device.agent.emergency_center.profile.region
 
 
 class JWTConsumerAuthMixin(JWTAuthMixin):

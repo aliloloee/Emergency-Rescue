@@ -73,3 +73,14 @@ class CustomJSONField(models.JSONField):
         self.validate_structure(value)
         return value
 
+
+class ModelType (models.IntegerChoices) :
+    SUBJECT = settings.SUBJECT_MODEL
+    AGENT   = settings.AGENT_MODEL
+
+    @classmethod
+    def all_types(cls):
+        return {
+            cls.SUBJECT.value : cls.SUBJECT.label,
+            cls.AGENT.value : cls.AGENT.label,
+        }
