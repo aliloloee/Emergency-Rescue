@@ -85,3 +85,8 @@ admin.site.register(AgentRecords)
 class MissionAdmin(LeafletGeoAdmin) :
     form = MissionAdminForm
 
+
+from agents.models import Route
+@admin.register(Route)
+class RoutesAdmin(LeafletGeoAdmin) :
+    list_display = ('name', )

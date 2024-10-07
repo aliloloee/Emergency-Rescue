@@ -158,3 +158,18 @@ class Mission(BaseModel):
         return f'Mission by agent {self.agent.name}'
 
 
+class Route(BaseModel) :
+    """
+    This model has no use in real-world. It is only added to draw simulation movement of the agents on the map,
+    and get their coordinates for communication scripts. 
+    """
+    name = models.CharField(max_length=100)
+    path = models.MultiLineStringField()
+
+    class Meta:
+        verbose_name = _('Route')
+        verbose_name_plural = _('Routes')
+        ordering = ('created',)
+
+    def __str__(self):
+        return self.name
