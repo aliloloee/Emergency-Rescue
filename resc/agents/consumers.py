@@ -61,6 +61,8 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
             )
 
             device_data['region'] = f'region-{self.region.pk}'
+            device_data['type'] = self.model_type
+            device_data['pk'] = self.device.pk
             await self.channel_layer.group_send(
                 self.region_group_name,
                 {
@@ -183,6 +185,8 @@ class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
             )
 
             device_data['region'] = f'region-{self.region.pk}'
+            device_data['type'] = self.model_type
+            device_data['pk'] = self.device.pk
             await self.channel_layer.group_send(
                 self.region_group_name,
                 {
