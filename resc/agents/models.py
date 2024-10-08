@@ -79,6 +79,7 @@ class SubjectDevice(Device) :
                     User, on_delete=models.CASCADE, blank=True, null=True,
                     related_name='devices', verbose_name=_('Subject')
                     )
+    occupied = models.BooleanField(default=False, verbose_name=_("Subject is occupied"))
 
     class Meta :
         unique_together = ('subject', 'name', )
