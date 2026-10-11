@@ -131,11 +131,34 @@ class AgentPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         if group:
             await self.channel_layer.group_discard(group, self.channel_name)
 
-    async def send_unoccupied_agents(self):
-        unoccupied_agents = Agent.objects.filter(emergency_center__profile__region=self.region).filter(busy=False)
-        agents_data = [agent.name for agent in unoccupied_agents]
+    async def agents_update(self, event) :
+        """
+        Group handler: re-send the roster when an agent's availability changes.
+
+        Nothing publishes to this group yet - the dispatch workflow will, as it
+        flips Agent.busy. Without a handler, joining the group is pointless and
+        any group_send to it would raise.
+        """
         await self.send(text_data=json.dumps({
-            'unoccupied_agents': agents_data
+            'unoccupied_agents': event['value']
+        }))
+
+    @database_sync_to_async
+    def get_unoccupied_agents(self) :
+        """
+        The queryset has to be evaluated here, inside the sync context. Iterating
+        it from the async consumer raises SynchronousOnlyOperation.
+        """
+        agents = Agent.objects.filter(
+                        emergency_center__profile__region=self.region,
+                        busy=False,
+                        )
+        # The id is what a dispatch request will have to name the agent by.
+        return [{'id': agent.pk, 'name': agent.name} for agent in agents]
+
+    async def send_unoccupied_agents(self):
+        await self.send(text_data=json.dumps({
+            'unoccupied_agents': await self.get_unoccupied_agents()
         }))
 
 
