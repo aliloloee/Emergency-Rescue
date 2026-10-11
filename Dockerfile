@@ -22,7 +22,8 @@ WORKDIR /app
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 RUN pip install --upgrade pip
-RUN pip install GDAL==$(gdal-config --version) --global-option=build_ext --global-option="-I/usr/include/gdal"
+# Include dirs come from CPLUS_INCLUDE_PATH/C_INCLUDE_PATH above; pip removed --global-option
+RUN pip install GDAL==$(gdal-config --version)
 
 # Install dependencies
 COPY requirements.txt /app/
