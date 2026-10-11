@@ -15,3 +15,10 @@ staticfiles/
 help.txt
 short-run.txt
 docker-commands.bat
+
+# Claude Code
+CLAUDE.md
+.claude/
+
+# local env backups (contain SECRET_KEY)
+.env.backup*
