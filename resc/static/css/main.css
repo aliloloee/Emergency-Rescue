@@ -1,0 +1,25 @@
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  display: flex;
+}
+#left-panel {
+  flex: 1 1 75%; /* Grow, shrink, basis */
+  max-width: 75%; /* Ensures left panel is at most 75% of the page width */
+  padding: 10px;
+}
+#map {
+  height: 100%;
+  width: 100%;
+}
+#right-panel {
+  flex: 1 1 25%; /* Grow, shrink, basis */
+  padding: 10px;
+  background-color: #f0f0f0; /* Optional: Background color for the right panel */
+}
+button {
+  margin-top: 20px;
+}

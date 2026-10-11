@@ -5,10 +5,7 @@ venv/
 
 __pycache__/
 
-/static/
-static
-staticfiles
-/staticfiles/
+# collectstatic output only - the source assets in resc/static/ are tracked
 staticfiles/
 
 # communication-scripts/
