@@ -21,16 +21,17 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
         self.queue_size = 100
 
     async def connect(self):
-        await super().connect()
+        if not await super().connect():
+            return
 
         self.device = self.scope["device"]
         self.region = self.scope["region"]
 
         # CREATE A RECORD
         self.record = await database_sync_to_async(self.create_record)()
-        
+
         # GET REDIS DATABASE
-        self.queue_name = f'queue:{self.device.pk}:{self.record.pk}' 
+        self.queue_name = f'queue:{self.device.pk}:{self.record.pk}'
         self.counter = 0
 
         self.publish_group_name = f'publish-agent-{self.device.pk}'
@@ -76,7 +77,10 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
         await self.add_to_db(data)
 
     async def disconnect(self, close_code=None):
-        await self.channel_layer.group_discard(self.publish_group_name, self.channel_name)
+        # connect() may have bailed out before the group was joined
+        group = getattr(self, 'publish_group_name', None)
+        if group:
+            await self.channel_layer.group_discard(group, self.channel_name)
 
     def create_record(self) :
         kw = {
@@ -109,7 +113,8 @@ class AgentPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         super().__init__(*args, **kwargs)
 
     async def connect(self):
-        await super().connect()
+        if not await super().connect():
+            return
 
         self.region = self.scope["region"]
         self.agents_panel_group_name = f'agents-panel-region-{self.region.pk}'
@@ -121,7 +126,10 @@ class AgentPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         await self.send_unoccupied_agents()
 
     async def disconnect(self, close_code=None):
-        await self.channel_layer.group_discard(self.agents_panel_group_name, self.channel_name)
+        # connect() may have bailed out before the group was joined
+        group = getattr(self, 'agents_panel_group_name', None)
+        if group:
+            await self.channel_layer.group_discard(group, self.channel_name)
 
     async def send_unoccupied_agents(self):
         unoccupied_agents = Agent.objects.filter(emergency_center__profile__region=self.region).filter(busy=False)
@@ -136,7 +144,8 @@ class EmergencyReceiveConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         super().__init__(*args, **kwargs)
 
     async def connect(self):
-        await super().connect()
+        if not await super().connect():
+            return
 
         self.region = self.scope["region"]
         self.region_group_name = f'region-{self.region.pk}'
@@ -148,7 +157,10 @@ class EmergencyReceiveConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         await self.accept()
 
     async def disconnect(self, close_code=None):
-        await self.channel_layer.group_discard(self.region_group_name, self.channel_name)
+        # connect() may have bailed out before the group was joined
+        group = getattr(self, 'region_group_name', None)
+        if group:
+            await self.channel_layer.group_discard(group, self.channel_name)
 
     async def echo(self, event) :
         device_data = event['value']
@@ -166,16 +178,17 @@ class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
         self.queue_size = 100
 
     async def connect(self):
-        await super().connect()
+        if not await super().connect():
+            return
 
         self.device = self.scope["device"]
         self.region = self.scope["region"]
 
         # CREATE A RECORD
         self.record = await database_sync_to_async(self.create_record)()
-        
+
         # GET REDIS DATABASE
-        self.queue_name = f'queue:{self.device.pk}:{self.record.pk}' 
+        self.queue_name = f'queue:{self.device.pk}:{self.record.pk}'
         self.counter = 0
 
         self.publish_group_name = f'publish-subject-{self.device.pk}'
@@ -227,7 +240,10 @@ class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
         await self.add_to_db(data)
 
     async def disconnect(self, close_code=None):
-        await self.channel_layer.group_discard(self.publish_group_name, self.channel_name)
+        # connect() may have bailed out before the group was joined
+        group = getattr(self, 'publish_group_name', None)
+        if group:
+            await self.channel_layer.group_discard(group, self.channel_name)
 
     def create_record(self) :
         kw = {

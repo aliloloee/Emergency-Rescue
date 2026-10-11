@@ -1,7 +1,6 @@
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import AnonymousUser
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import HTTP_HEADER_ENCODING
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
@@ -9,31 +8,62 @@ from channels.db import database_sync_to_async
 
 from agents.models import SubjectDevice, AgentDevice
 
+from http.cookies import SimpleCookie
+
 import jwt
 
 
 class JWTAuthMixin:
     model = get_user_model()
 
+    @staticmethod
+    def get_access_token(scope):
+        """
+        Read the access token cookie. CookieMiddleware (part of AuthMiddlewareStack)
+        has normally already parsed the header into scope['cookies']; fall back to
+        parsing it ourselves so the consumer also works without that middleware.
+        """
+        cookies = scope.get('cookies')
+        if cookies is None:
+            raw = dict(scope.get('headers', ())).get(b'cookie', b'').decode()
+            cookies = {key: morsel.value for key, morsel in SimpleCookie(raw).items()}
+
+        return cookies.get(settings.SIMPLE_JWT['ACCESS_TOKEN_NAME'])
+
     @database_sync_to_async
     def get_region(self, access_token):
+        """
+        Resolve the region of the user owning the access token.
+
+        Every failure raises AuthenticationFailed so the consumer can close with
+        4001 and the browser knows to refresh its token and reconnect. Returning
+        an anonymous placeholder instead would let the socket be accepted into a
+        'region-None' group and fail silently.
+        """
+        if not access_token:
+            raise AuthenticationFailed(_('Access token cookie is missing'), code='access_token_missing')
+
         try:
-            if access_token:
-                user_id = jwt.decode(access_token, settings.SECRET_KEY, algorithms=["HS256"])["user_id"]
-                user = self.model.objects.get(id=user_id)
-                # print(f'user={user}')
-                return user.profile.region
-            else:
-                return AnonymousUser()
-        except (jwt.exceptions.DecodeError, self.model.DoesNotExist):
-            return AnonymousUser()
+            # Covers malformed tokens, bad signatures and - importantly - expired
+            # ones: ExpiredSignatureError is not a subclass of DecodeError.
+            payload = jwt.decode(access_token, settings.SECRET_KEY, algorithms=['HS256'])
+        except jwt.exceptions.PyJWTError:
+            raise AuthenticationFailed(_('Access token is invalid or expired'), code='invalid_access_token')
+
+        try:
+            user = self.model.objects.select_related('profile__region').get(id=payload['user_id'])
+        except (KeyError, self.model.DoesNotExist):
+            raise AuthenticationFailed(_('Access token does not match a user'), code='user_not_found')
+
+        # A user may legitimately have no profile yet, or a profile with no region.
+        region = getattr(getattr(user, 'profile', None), 'region', None)
+        if region is None:
+            raise AuthenticationFailed(_('User is not assigned to a region'), code='region_not_found')
+
+        return region
 
     async def authenticate(self, scope):
-        headers_dict = dict(scope["headers"])
-        cookies_str = headers_dict.get(b"cookie", b"").decode()
-        cookies = {cookie.split("=")[0]: cookie.split("=")[1] for cookie in cookies_str.split("; ")}
-        access_token = cookies.get("access_token")
-        scope["region"] = await self.get_region(access_token)
+        scope['region'] = await self.get_region(self.get_access_token(scope))
 
 
 class BaseAuthMixin:
@@ -92,11 +122,29 @@ class BaseAuthMixin:
 
 class AliveSubjectAuthMixin(BaseAuthMixin):
     async def connect(self):
+        """
+        Returns True when the scope was authenticated. Consumers must check the
+        result and return early when it is False, otherwise they carry on and
+        read scope keys that were never set.
+        """
         try:
             await self.authenticate(self.scope)
-        except AuthenticationFailed as e:
-            await self.close(code=4001)
-            return
+        except AuthenticationFailed:
+            await self.reject()
+            return False
+
+        return True
+
+    async def reject(self):
+        """
+        Accept before closing so the client actually receives close code 4001.
+
+        Closing an unaccepted connection aborts the HTTP upgrade instead, which
+        the client sees as a bare 403 with no code - and the browser needs the
+        4001 to know it should refresh its token and reconnect.
+        """
+        await self.accept()
+        await self.close(code=4001)
 
 
 class AgentAuthMixin(AliveSubjectAuthMixin):
@@ -109,9 +157,22 @@ class AgentAuthMixin(AliveSubjectAuthMixin):
 
 class JWTConsumerAuthMixin(JWTAuthMixin):
     async def connect(self):
+        """
+        Returns True when the scope was authenticated - see AliveSubjectAuthMixin.
+        """
         try:
             await self.authenticate(self.scope)
-        except AuthenticationFailed as e:
-            await self.close(code=4001)
-            return
+        except AuthenticationFailed:
+            await self.reject()
+            return False
+
+        return True
+
+    async def reject(self):
+        """
+        Accept before closing so the browser receives close code 4001 and runs
+        its refresh-and-reconnect path - see AliveSubjectAuthMixin.reject.
+        """
+        await self.accept()
+        await self.close(code=4001)
 
