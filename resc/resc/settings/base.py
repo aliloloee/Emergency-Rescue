@@ -46,6 +46,32 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+
+# Django defaults this to 'same-origin', which makes the browser drop the
+# Referer header on every cross-origin request. OpenStreetMap answers a tile
+# request that carries no Referer with an "Access blocked" image instead of the
+# map, so both the dashboard map and the Leaflet widgets in the admin render as
+# blocked tiles. 'strict-origin-when-cross-origin' is the current browser
+# default: it still never leaks the path or query string, and still sends
+# nothing when downgrading from HTTPS to HTTP, but it does send the bare origin
+# cross-origin, which is what the tile servers want to see.
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+
+# django-leaflet's built-in tile URL is protocol relative ('//{s}.tile...'), so
+# on a plain HTTP page it resolves to http:// and OpenStreetMap answers every
+# single tile with a 301 to https - two round trips per tile against
+# volunteer-run servers. Pin https explicitly. The {s} subdomain trick is also
+# dropped: it exists to work around the old per-host connection limit and is no
+# longer recommended.
+LEAFLET_CONFIG = {
+    'TILES': [(
+        'OSM',
+        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    )],
+}
+
 ROOT_URLCONF = 'resc.urls'
 
 TEMPLATES = [
