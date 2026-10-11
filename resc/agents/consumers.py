@@ -3,7 +3,7 @@ from channels.db import database_sync_to_async
 from django.utils.translation import gettext_lazy as _
 
 from resc.redis_conf import RSCREDIS
-from agents.models import SubjectRecords, AgentRecords
+from agents.models import SubjectRecords, AgentRecords, Agent
 from agents.tasks import export_from_redis_to_db
 from agents.mixinx import AliveSubjectAuthMixin, AgentAuthMixin, JWTConsumerAuthMixin
 from agents.utils import ModelType
@@ -102,6 +102,33 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
             self.counter = self.counter + 1
 
             RSCREDIS.delete_key(self.queue_name)
+
+
+class AgentPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    async def connect(self):
+        await super().connect()
+
+        self.region = self.scope["region"]
+        self.agents_panel_group_name = f'agents-panel-region-{self.region.pk}'
+        await self.channel_layer.group_add(
+            self.agents_panel_group_name,
+            self.channel_name
+        )
+        await self.accept()
+        await self.send_unoccupied_agents()
+
+    async def disconnect(self, close_code=None):
+        await self.channel_layer.group_discard(self.agents_panel_group_name, self.channel_name)
+
+    async def send_unoccupied_agents(self):
+        unoccupied_agents = Agent.objects.filter(emergency_center__profile__region=self.region).filter(busy=False)
+        agents_data = [agent.name for agent in unoccupied_agents]
+        await self.send(text_data=json.dumps({
+            'unoccupied_agents': agents_data
+        }))
 
 
 class EmergencyReceiveConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
