@@ -4,9 +4,11 @@ from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import HTTP_HEADER_ENCODING
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
+from rest_framework.exceptions import PermissionDenied
 from channels.db import database_sync_to_async
 
 from agents.models import SubjectDevice, AgentDevice
+from profiles.utils import ProfileType
 
 from http.cookies import SimpleCookie
 
@@ -15,6 +17,12 @@ import jwt
 
 class JWTAuthMixin:
     model = get_user_model()
+
+    # Which profile types may open a JWT authenticated socket. This mirrors the
+    # gate on the dashboard page itself (MainBoard.test_func), which allows only
+    # emergency centers - note that SUPER is deliberately not included, so that
+    # the socket and the page stay consistent. Override per consumer if needed.
+    allowed_profile_types = (ProfileType.EMERGENCY_CENTER, )
 
     @staticmethod
     def get_access_token(scope):
@@ -35,10 +43,15 @@ class JWTAuthMixin:
         """
         Resolve the region of the user owning the access token.
 
-        Every failure raises AuthenticationFailed so the consumer can close with
+        A bad token raises AuthenticationFailed so the consumer can close with
         4001 and the browser knows to refresh its token and reconnect. Returning
         an anonymous placeholder instead would let the socket be accepted into a
         'region-None' group and fail silently.
+
+        A valid token belonging to a user who is not allowed on this socket
+        raises PermissionDenied instead, which closes with 4005. Refreshing the
+        token cannot fix that, so it must not reuse 4001 - the browser would
+        refresh and reconnect in an endless loop.
         """
         if not access_token:
             raise AuthenticationFailed(_('Access token cookie is missing'), code='access_token_missing')
@@ -56,11 +69,17 @@ class JWTAuthMixin:
             raise AuthenticationFailed(_('Access token does not match a user'), code='user_not_found')
 
         # A user may legitimately have no profile yet, or a profile with no region.
-        region = getattr(getattr(user, 'profile', None), 'region', None)
-        if region is None:
+        profile = getattr(user, 'profile', None)
+        if profile is None:
+            raise AuthenticationFailed(_('User has no profile'), code='profile_not_found')
+
+        if profile.type not in self.allowed_profile_types:
+            raise PermissionDenied(_('This account may not watch a region feed'), code='profile_type_not_allowed')
+
+        if profile.region is None:
             raise AuthenticationFailed(_('User is not assigned to a region'), code='region_not_found')
 
-        return region
+        return profile.region
 
     async def authenticate(self, scope):
         scope['region'] = await self.get_region(self.get_access_token(scope))
@@ -135,16 +154,16 @@ class AliveSubjectAuthMixin(BaseAuthMixin):
 
         return True
 
-    async def reject(self):
+    async def reject(self, code=4001):
         """
-        Accept before closing so the client actually receives close code 4001.
+        Accept before closing so the client actually receives the close code.
 
         Closing an unaccepted connection aborts the HTTP upgrade instead, which
         the client sees as a bare 403 with no code - and the browser needs the
         4001 to know it should refresh its token and reconnect.
         """
         await self.accept()
-        await self.close(code=4001)
+        await self.close(code=code)
 
 
 class AgentAuthMixin(AliveSubjectAuthMixin):
@@ -158,21 +177,28 @@ class AgentAuthMixin(AliveSubjectAuthMixin):
 class JWTConsumerAuthMixin(JWTAuthMixin):
     async def connect(self):
         """
-        Returns True when the scope was authenticated - see AliveSubjectAuthMixin.
+        Returns True when the scope was authenticated and authorized - see
+        AliveSubjectAuthMixin.
         """
         try:
             await self.authenticate(self.scope)
         except AuthenticationFailed:
-            await self.reject()
+            # A new token might work, so let the browser refresh and retry.
+            await self.reject(code=4001)
+            return False
+        except PermissionDenied:
+            # The token is fine, the account simply is not allowed here. Use a
+            # code the browser does not retry on, or it loops forever.
+            await self.reject(code=4005)
             return False
 
         return True
 
-    async def reject(self):
+    async def reject(self, code=4001):
         """
-        Accept before closing so the browser receives close code 4001 and runs
-        its refresh-and-reconnect path - see AliveSubjectAuthMixin.reject.
+        Accept before closing so the browser receives the close code and can act
+        on it - see AliveSubjectAuthMixin.reject.
         """
         await self.accept()
-        await self.close(code=4001)
+        await self.close(code=code)
 
