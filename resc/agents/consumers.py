@@ -6,7 +6,7 @@ from django.utils.translation import gettext_lazy as _
 
 from resc.redis_conf import RSCREDIS
 from agents import services
-from agents.models import SubjectRecords, AgentRecords, Agent, Mission
+from agents.models import SubjectRecords, AgentRecords, Agent, Mission, DistressAlert
 from agents.tasks import export_from_redis_to_db
 from agents.mixinx import AliveSubjectAuthMixin, AgentAuthMixin, JWTConsumerAuthMixin
 from agents.utils import ModelType, MissionStatus
@@ -16,10 +16,33 @@ import json
 
 def center_group_name(emergency_center_pk) :
     """
-    Alerts go to one center rather than to everybody in the region, so they need
-    a group keyed by center. Every other group here is region-wide.
+    Alerts, mission updates and the dispatch roster all concern one center
+    rather than everybody in the region, so they need a group keyed by center.
+    The region group remains what the *map* is built on.
     """
     return f'center-{emergency_center_pk}'
+
+
+def queue_name_for(model_type, device_pk, record_pk) :
+    """
+    The Redis list a device's readings are buffered in.
+
+    The model type has to be part of the key. Subject and agent devices are
+    numbered from separate sequences, and so are their record tables, so subject
+    device 1 writing record 7 and agent device 1 writing record 7 would
+    otherwise share one list. Their readings would interleave, and the export
+    would then reject the whole batch, because an agent record may only contain
+    lat/lng/timestamp and a subject reading also carries a heart rate.
+    """
+    return f'queue:{model_type}:{device_pk}:{record_pk}'
+
+
+def agent_group_name(agent_pk) :
+    """
+    Keyed by agent rather than by device: an assignment is given to a person,
+    and if they happen to carry two devices both should hear about it.
+    """
+    return f'agent-{agent_pk}'
 
 
 def alert_payload(alert, *, heartrate=None) :
@@ -40,6 +63,28 @@ def alert_payload(alert, *, heartrate=None) :
         'heartrate': heartrate,
         'first_seen': alert.first_seen.isoformat(),
         'last_seen': alert.last_seen.isoformat(),
+    }
+
+
+def mission_payload(mission) :
+    """
+    One shape for a mission, shared by the center panel and the agent's device.
+
+    Must be built in a sync context: it reads mission.agent.name, which is a
+    lazy foreign key and would raise SynchronousOnlyOperation from a consumer.
+    """
+    return {
+        'id': mission.pk,
+        'status': mission.status,
+        'outcome': mission.outcome,
+        'agent_id': mission.agent_id,
+        'agent_name': mission.agent.name,
+        'subject_device_id': mission.subject_device_id,
+        'lat': mission.location.y,
+        'lng': mission.location.x,
+        'acknowledged_at': mission.acknowledged_at.isoformat() if mission.acknowledged_at else None,
+        'reported_at': mission.reported_at.isoformat() if mission.reported_at else None,
+        'closed_at': mission.closed_at.isoformat() if mission.closed_at else None,
     }
 
 
@@ -93,9 +138,16 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
 
         self.publish_group_name = f'publish-agent-{self.device.pk}'
         self.region_group_name = f'region-{self.region.pk}'
+        self.agent_group_name = agent_group_name(self.device.agent_id)
 
         await self.channel_layer.group_add(
             self.publish_group_name,
+            self.channel_name
+        )
+        # The downlink. Until this existed the socket was one-way and an
+        # assignment had no way of reaching the agent at all.
+        await self.channel_layer.group_add(
+            self.agent_group_name,
             self.channel_name
         )
 
@@ -108,36 +160,139 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
             await self.start_recording(mission)
 
     async def receive(self, text_data=None):
-        if text_data :
-            data = json.loads(text_data)
-            device_data = {
-                'lat': data["lat"],
-                'lng': data["lng"],
-                'timestamp': data["timestamp"],
-            }
+        """
+        Telemetry, or one of the mission messages.
 
-            await update_device_position(self.device, data["lat"], data["lng"])
+        A reading carries no 'type' key, which is how the two are told apart and
+        why devices written before the mission messages existed keep working
+        unchanged.
+        """
+        if not text_data :
+            return
 
-            # Recorded only while on a mission.
-            if self.record is not None :
-                await self.channel_layer.group_send(
-                    self.publish_group_name,
-                    {
-                        'type': 'processing',
-                        'value': {**device_data}
-                    }
-                )
+        data = json.loads(text_data)
+        message_type = data.get('type')
 
-            device_data['region'] = f'region-{self.region.pk}'
-            device_data['type'] = self.model_type
-            device_data['pk'] = self.device.pk
+        if message_type is None :
+            await self.handle_telemetry(data)
+        elif message_type == 'mission_ack' :
+            await self.handle_ack(data)
+        elif message_type == 'mission_report' :
+            await self.handle_report(data)
+        else :
+            await self.send_error('unknown_message', _('Unknown message type'))
+
+    async def handle_telemetry(self, data) :
+        device_data = {
+            'lat': data["lat"],
+            'lng': data["lng"],
+            'timestamp': data["timestamp"],
+        }
+
+        await update_device_position(self.device, data["lat"], data["lng"])
+
+        # Recorded only while on a mission.
+        if self.record is not None :
             await self.channel_layer.group_send(
-                self.region_group_name,
+                self.publish_group_name,
                 {
-                    'type': 'echo',
+                    'type': 'processing',
                     'value': {**device_data}
                 }
             )
+
+        device_data['region'] = f'region-{self.region.pk}'
+        device_data['type'] = self.model_type
+        device_data['pk'] = self.device.pk
+        await self.channel_layer.group_send(
+            self.region_group_name,
+            {
+                'type': 'echo',
+                'value': {**device_data}
+            }
+        )
+
+    async def send_error(self, code, message) :
+        await self.send(text_data=json.dumps({
+            'error': {'code': code, 'message': str(message)}
+        }))
+
+    @database_sync_to_async
+    def _acknowledge(self, mission_id) :
+        mission = Mission.objects.select_related('agent').get(pk=mission_id)
+        mission = services.acknowledge_mission(mission, self.device.agent)
+        return mission, mission_payload(mission), mission.emergency_center_id
+
+    @database_sync_to_async
+    def _report(self, mission_id, outcome) :
+        mission = Mission.objects.select_related('agent').get(pk=mission_id)
+        mission = services.report_mission(mission, self.device.agent, outcome)
+        return mission_payload(mission), mission.emergency_center_id
+
+    async def handle_ack(self, data) :
+        """
+        The agent confirms the assignment, which is what starts the mission -
+        and what starts recording their track.
+        """
+        try :
+            mission, payload, center_pk = await self._acknowledge(data['mission_id'])
+        except KeyError :
+            return await self.send_error('bad_request', _('mission_id is required'))
+        except Mission.DoesNotExist :
+            return await self.send_error('not_found', _('No such mission'))
+        except services.DispatchError as error :
+            return await self.send_error(error.code, error)
+
+        await self.start_recording(mission)
+        await self.send(text_data=json.dumps({'mission': payload}))
+        await self.notify_center(center_pk, payload)
+
+    async def handle_report(self, data) :
+        """
+        The agent reports how it went. The mission is not closed by this - the
+        center still has to finalise it - but the field work is over, so the
+        recording stops here.
+        """
+        try :
+            payload, center_pk = await self._report(data['mission_id'], data['outcome'])
+        except KeyError :
+            return await self.send_error('bad_request', _('mission_id and outcome are required'))
+        except Mission.DoesNotExist :
+            return await self.send_error('not_found', _('No such mission'))
+        except services.DispatchError as error :
+            return await self.send_error(error.code, error)
+
+        await self.stop_recording()
+        await self.send(text_data=json.dumps({'mission': payload}))
+        await self.notify_center(center_pk, payload)
+
+    async def notify_center(self, center_pk, payload) :
+        await self.channel_layer.group_send(
+            center_group_name(center_pk),
+            {
+                'type': 'mission_update',
+                'value': payload,
+            }
+        )
+
+    async def mission_assigned(self, event) :
+        """Group handler: the center has dispatched this agent."""
+        await self.send(text_data=json.dumps({
+            'mission_assigned': event['value']
+        }))
+
+    async def mission_closed(self, event) :
+        """
+        Group handler: the mission is over, whether finalised or called off.
+
+        Stop recording either way - on an abort the agent may well still be in
+        the field, but what they do next is not part of a mission that no longer
+        exists.
+        """
+        await self.stop_recording()
+        await self.send(text_data=json.dumps({
+            'mission_closed': event['value']
+        }))
 
     async def processing(self, event) :
         data = event['value']
@@ -147,10 +302,11 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
         # Whatever is still buffered belongs to the mission; don't drop its tail.
         await self.stop_recording()
 
-        # connect() may have bailed out before the group was joined
-        group = getattr(self, 'publish_group_name', None)
-        if group:
-            await self.channel_layer.group_discard(group, self.channel_name)
+        # connect() may have bailed out before the groups were joined
+        for attribute in ('publish_group_name', 'agent_group_name') :
+            group = getattr(self, attribute, None)
+            if group:
+                await self.channel_layer.group_discard(group, self.channel_name)
 
     @database_sync_to_async
     def get_active_mission(self) :
@@ -173,7 +329,7 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
 
         self.mission = mission
         self.record = await self.create_record(mission)
-        self.queue_name = f'queue:{self.device.pk}:{self.record.pk}'
+        self.queue_name = queue_name_for(self.model_type, self.device.pk, self.record.pk)
         self.counter = 0
 
     async def stop_recording(self) :
@@ -251,13 +407,11 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         self.region = self.scope["region"]
         self.center = self.scope["account"]
 
-        self.agents_panel_group_name = f'agents-panel-region-{self.region.pk}'
+        # One group, because everything this socket carries - the roster, the
+        # alerts, the mission updates - concerns this center alone. An agent
+        # going busy changes nobody else's roster.
         self.center_group_name = center_group_name(self.center.pk)
 
-        await self.channel_layer.group_add(
-            self.agents_panel_group_name,
-            self.channel_name
-        )
         await self.channel_layer.group_add(
             self.center_group_name,
             self.channel_name
@@ -271,11 +425,10 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         await self.send_open_alerts()
 
     async def disconnect(self, close_code=None):
-        # connect() may have bailed out before the groups were joined
-        for attribute in ('agents_panel_group_name', 'center_group_name') :
-            group = getattr(self, attribute, None)
-            if group:
-                await self.channel_layer.group_discard(group, self.channel_name)
+        # connect() may have bailed out before the group was joined
+        group = getattr(self, 'center_group_name', None)
+        if group:
+            await self.channel_layer.group_discard(group, self.channel_name)
 
     async def agents_update(self, event) :
         """
@@ -308,20 +461,165 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_unoccupied_agents(self) :
         """
+        This center's own free agents.
+
+        Scoped to the center rather than the region: a center may never dispatch
+        another center's agent, so listing them would only invite a request that
+        create_mission is going to refuse.
+
         The queryset has to be evaluated here, inside the sync context. Iterating
         it from the async consumer raises SynchronousOnlyOperation.
         """
-        agents = Agent.objects.filter(
-                        emergency_center__profile__region=self.region,
-                        busy=False,
-                        )
-        # The id is what a dispatch request will have to name the agent by.
+        agents = Agent.objects.filter(emergency_center=self.center, busy=False)
+        # The id is what a dispatch request names the agent by.
         return [{'id': agent.pk, 'name': agent.name} for agent in agents]
 
     async def send_unoccupied_agents(self):
         await self.send(text_data=json.dumps({
             'unoccupied_agents': await self.get_unoccupied_agents()
         }))
+
+    async def send_error(self, code, message) :
+        await self.send(text_data=json.dumps({
+            'error': {'code': code, 'message': str(message)}
+        }))
+
+    async def mission_update(self, event) :
+        """Group handler: a mission this center owns has moved."""
+        await self.send(text_data=json.dumps({
+            'mission': event['value']
+        }))
+
+    # ------------------------------------------------------------ commands --
+
+    async def receive(self, text_data=None) :
+        """
+        The operator's decisions. Dispatching is deliberately a human act, so
+        this socket is the only way a mission ever gets created.
+        """
+        if not text_data :
+            return
+
+        try :
+            message = json.loads(text_data)
+        except ValueError :
+            return await self.send_error('bad_request', _('Malformed message'))
+
+        handlers = {
+            'rank_agents': self.handle_rank_agents,
+            'dispatch': self.handle_dispatch,
+            'dismiss': self.handle_dismiss,
+            'abort': self.handle_abort,
+            'finalize': self.handle_finalize,
+        }
+        handler = handlers.get(message.get('type'))
+        if handler is None :
+            return await self.send_error('unknown_message', _('Unknown message type'))
+
+        try :
+            await handler(message)
+        except KeyError as missing :
+            await self.send_error('bad_request', _('Missing field: %s') % missing)
+        except (DistressAlert.DoesNotExist, Mission.DoesNotExist, Agent.DoesNotExist) :
+            await self.send_error('not_found', _('No such object'))
+        except services.DispatchError as error :
+            await self.send_error(error.code, error)
+
+    @database_sync_to_async
+    def _rank_agents(self, alert_id) :
+        alert = DistressAlert.objects.get(pk=alert_id, emergency_center=self.center)
+        ranked = services.rank_agents_for_center(self.center, alert.location)
+        return [{'id': agent.pk,
+                 'name': agent.name,
+                 # distance comes back as a measure object, not a number.
+                 'distance_m': round(agent.distance.m)}
+                for agent in ranked]
+
+    async def handle_rank_agents(self, message) :
+        """
+        The ranked list only makes sense against a place, so it is asked for per
+        alert rather than pushed. The roster sent on connect is the unranked
+        version, for when nothing is selected.
+        """
+        alert_id = message['alert_id']
+        await self.send(text_data=json.dumps({
+            'alert_id': alert_id,
+            'ranked_agents': await self._rank_agents(alert_id),
+        }))
+
+    @database_sync_to_async
+    def _dispatch(self, alert_id, agent_id) :
+        alert = DistressAlert.objects.get(pk=alert_id)
+        agent = Agent.objects.get(pk=agent_id)
+        mission = services.create_mission(alert, agent, self.center)
+        return mission_payload(mission), mission.agent_id
+
+    async def handle_dispatch(self, message) :
+        payload, agent_pk = await self._dispatch(message['alert_id'], message['agent_id'])
+
+        await self.channel_layer.group_send(
+            agent_group_name(agent_pk),
+            {'type': 'mission_assigned', 'value': payload},
+        )
+        await self.broadcast_mission(payload)
+        await self.broadcast_roster()
+
+    @database_sync_to_async
+    def _dismiss(self, alert_id) :
+        alert = DistressAlert.objects.select_related('subject_device').get(pk=alert_id)
+        return alert_payload(services.dismiss_alert(alert, self.center))
+
+    async def handle_dismiss(self, message) :
+        payload = await self._dismiss(message['alert_id'])
+        await self.channel_layer.group_send(
+            self.center_group_name,
+            {'type': 'alert_update', 'value': payload},
+        )
+
+    @database_sync_to_async
+    def _abort(self, mission_id) :
+        mission = Mission.objects.select_related('agent').get(pk=mission_id)
+        mission = services.abort_mission(mission, self.center)
+        return mission_payload(mission), mission.agent_id
+
+    async def handle_abort(self, message) :
+        payload, agent_pk = await self._abort(message['mission_id'])
+        await self.announce_closed(payload, agent_pk)
+
+    @database_sync_to_async
+    def _finalize(self, mission_id, outcome) :
+        mission = Mission.objects.select_related('agent').get(pk=mission_id)
+        mission = services.finalize_mission(mission, self.center, outcome=outcome)
+        return mission_payload(mission), mission.agent_id
+
+    async def handle_finalize(self, message) :
+        payload, agent_pk = await self._finalize(message['mission_id'], message.get('outcome'))
+        await self.announce_closed(payload, agent_pk)
+
+    async def announce_closed(self, payload, agent_pk) :
+        """A closed mission frees its agent, so the roster changes too."""
+        await self.channel_layer.group_send(
+            agent_group_name(agent_pk),
+            {'type': 'mission_closed', 'value': payload},
+        )
+        await self.broadcast_mission(payload)
+        await self.broadcast_roster()
+
+    async def broadcast_mission(self, payload) :
+        await self.channel_layer.group_send(
+            self.center_group_name,
+            {'type': 'mission_update', 'value': payload},
+        )
+
+    async def broadcast_roster(self) :
+        """
+        Sent to the group rather than to this socket, so that a center with two
+        operators logged in does not leave one of them looking at a stale list.
+        """
+        await self.channel_layer.group_send(
+            self.center_group_name,
+            {'type': 'agents_update', 'value': await self.get_unoccupied_agents()},
+        )
 
 
 class EmergencyReceiveConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
@@ -373,7 +671,7 @@ class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
         self.record = await database_sync_to_async(self.create_record)()
 
         # GET REDIS DATABASE
-        self.queue_name = f'queue:{self.device.pk}:{self.record.pk}'
+        self.queue_name = queue_name_for(self.model_type, self.device.pk, self.record.pk)
         self.counter = 0
 
         self.publish_group_name = f'publish-subject-{self.device.pk}'
