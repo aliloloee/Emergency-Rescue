@@ -10,19 +10,76 @@ import json
 
 
 class MissionStatus (models.IntegerChoices) :
+    """
+    Where a mission is in its lifecycle. What actually happened is MissionOutcome:
+    the agent reports an outcome (REPORTED), then the center closes the mission
+    (CLOSED) and may override that report.
+    """
     JUST_DEFINED   = settings.JUST_DEFINED
     IN_PROGRESS    = settings.IN_PROGRESS
-    SUCCESS        = settings.SUCCESS
-    FAILURE        = settings.FAILURE
+    REPORTED       = settings.REPORTED
+    CLOSED         = settings.CLOSED
 
     @classmethod
     def all_types(cls):
         return {
             cls.JUST_DEFINED.value : cls.JUST_DEFINED.label,
             cls.IN_PROGRESS.value : cls.IN_PROGRESS.label,
+            cls.REPORTED.value : cls.REPORTED.label,
+            cls.CLOSED.value : cls.CLOSED.label
+        }
+
+    @classmethod
+    def open_statuses(cls):
+        """
+        Statuses in which a mission still holds its agent. Used by the constraint
+        that stops one agent being assigned to two missions at once, so changing
+        this changes the database constraint - it needs a migration.
+        """
+        return (cls.JUST_DEFINED, cls.IN_PROGRESS, cls.REPORTED)
+
+
+class MissionOutcome (models.IntegerChoices) :
+    """What happened on a mission. Null until the agent reports."""
+    SUCCESS = settings.SUCCESS
+    FAILURE = settings.FAILURE
+
+    @classmethod
+    def all_types(cls):
+        return {
             cls.SUCCESS.value : cls.SUCCESS.label,
             cls.FAILURE.value : cls.FAILURE.label
         }
+
+
+class AlertStatus (models.IntegerChoices) :
+    """
+    Lifecycle of a distress alert - the "possible mission" raised when a subject
+    device transmits. UNROUTED means no free agent was available in the region at
+    the time; the next reading from the same device retries the routing.
+    """
+    UNROUTED  = settings.ALERT_UNROUTED
+    ROUTED    = settings.ALERT_ROUTED
+    CONVERTED = settings.ALERT_CONVERTED
+    DISMISSED = settings.ALERT_DISMISSED
+
+    @classmethod
+    def all_types(cls):
+        return {
+            cls.UNROUTED.value : cls.UNROUTED.label,
+            cls.ROUTED.value : cls.ROUTED.label,
+            cls.CONVERTED.value : cls.CONVERTED.label,
+            cls.DISMISSED.value : cls.DISMISSED.label
+        }
+
+    @classmethod
+    def open_statuses(cls):
+        """
+        Statuses in which an alert is still awaiting a decision. Used by the
+        constraint that enforces one open alert per subject device, which is what
+        deduplicates the stream of readings coming from a device in distress.
+        """
+        return (cls.UNROUTED, cls.ROUTED)
 
 
 def generate_api_key():

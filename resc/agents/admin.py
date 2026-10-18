@@ -3,18 +3,22 @@ from django.contrib.gis import admin
 from django.contrib.auth import get_user_model
 from leaflet.admin import LeafletGeoAdmin
 
-from agents.models import Point, Region, Agent, AgentDevice, SubjectDevice, AgentRecords, SubjectRecords, Mission
+from agents.models import (
+    Point, Region, Agent, AgentDevice, SubjectDevice, AgentRecords, SubjectRecords,
+    Mission, DistressAlert,
+)
 from profiles.models import Profile
 from profiles.utils import ProfileType
 
 User = get_user_model()
 
 def fetch_ids_of_normal_users() :
+    # Must stay a function called per form instance. Evaluating it once at import
+    # time froze the dropdown at whatever existed when the process started, so
+    # users created afterwards never appeared until the container was restarted.
     normal_profiles = Profile.objects.filter(type=ProfileType.NORMAL)
     corresponding_users = User.objects.filter(id__in=normal_profiles.values('user_id'))
     return corresponding_users
-
-normal_users = fetch_ids_of_normal_users()
 
 
 class AgentAdminForm(forms.ModelForm):
@@ -35,7 +39,7 @@ class MissionAdminForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['subject'].queryset = normal_users
+        self.fields['subject'].queryset = fetch_ids_of_normal_users()
 
 class SubjectDeviceAdminForm(forms.ModelForm):
     class Meta:
@@ -44,7 +48,7 @@ class SubjectDeviceAdminForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['subject'].queryset = normal_users
+        self.fields['subject'].queryset = fetch_ids_of_normal_users()
 
 
 @admin.register(Point)
@@ -81,9 +85,19 @@ admin.site.register(SubjectRecords)
 admin.site.register(AgentRecords)
 
 
+@admin.register(DistressAlert)
+class DistressAlertAdmin(LeafletGeoAdmin) :
+    list_display = ('subject_device', 'status', 'emergency_center', 'first_seen', 'last_seen')
+    list_filter = ('status',)
+    readonly_fields = ('first_seen', 'last_seen')
+
+
 @admin.register(Mission)
 class MissionAdmin(LeafletGeoAdmin) :
     form = MissionAdminForm
+    list_display = ('__str__', 'status', 'outcome', 'emergency_center', 'subject_device', 'archived')
+    list_filter = ('status', 'outcome', 'archived')
+    readonly_fields = ('acknowledged_at', 'reported_at', 'closed_at')
 
 
 from agents.models import Route

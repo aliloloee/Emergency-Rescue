@@ -200,11 +200,32 @@ NORMAL           = 1, _('NORMAL')
 EMERGENCY_CENTER = 2, _('EMERGENCY_CENTER')
 SUPER            = 3, _('SUPER')
 
-# STATUS OF MISSIONS
+# STATUS OF MISSIONS - where a mission is in its lifecycle.
+# Completion is two phased: the agent REPORTs an outcome, then the center CLOSEs the
+# mission (and may override what the agent reported). What actually happened is the
+# separate MISSION OUTCOME below, so that "the agent says it worked" and "the center
+# agrees" are not the same fact.
 JUST_DEFINED  = 1, _('JUST_DEFINED')
 IN_PROGRESS   = 2, _('IN_PROGRESS')
-SUCCESS       = 3, _('SUCCESS')
-FAILURE       = 4, _('FAILURE')
+REPORTED      = 3, _('REPORTED')
+CLOSED        = 4, _('CLOSED')
+
+# OUTCOME OF MISSIONS - what happened, as opposed to where in the lifecycle it is.
+SUCCESS       = 1, _('SUCCESS')
+FAILURE       = 2, _('FAILURE')
+
+# STATUS OF DISTRESS ALERTS (the "possible mission" raised by a transmitting device).
+# UNROUTED means no free agent was available anywhere in the region when the alert was
+# raised; the next reading from the same device retries the routing, so this resolves
+# itself without a scheduler.
+ALERT_UNROUTED  = 1, _('UNROUTED')
+ALERT_ROUTED    = 2, _('ROUTED')
+ALERT_CONVERTED = 3, _('CONVERTED')
+ALERT_DISMISSED = 4, _('DISMISSED')
+
+# How recently an agent device must have transmitted to count as live for dispatch.
+# Agent devices transmit continuously, so a silent one is offline rather than idle.
+AGENT_LIVE_SECONDS = 60
 
 # SETTING FOR CREATING API_KEY OF THE DEVICE
 DEVICE_API_KEY_SETTINGS = {
