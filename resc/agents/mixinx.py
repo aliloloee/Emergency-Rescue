@@ -130,7 +130,29 @@ class BaseAuthMixin:
 
     @database_sync_to_async
     def get_region(self, device):
-        return device.subject.profile.region
+        """
+        A subject device takes its region from whoever it is registered to.
+
+        Every step of that is optional in the data model - the device may have
+        no subject, the subject may have no profile, the profile may have no
+        region - and walking it blindly raised AttributeError, which surfaced as
+        a 500 on the handshake rather than as a refusal the client can read.
+
+        The region really ought to come from where the device *is* rather than
+        from its owner's address; see the note in AliveSubjectConsumer.receive.
+        That needs the first reading before the region is known, so it is a
+        larger change than this.
+        """
+        region = getattr(
+            getattr(getattr(device, 'subject', None), 'profile', None),
+            'region', None,
+        )
+        if region is None:
+            raise AuthenticationFailed(
+                _("This device is not registered to a subject in a region"),
+                code="device_region_not_found",
+            )
+        return region
 
     async def authenticate(self, scope):
         # Ensure header is present
@@ -186,7 +208,17 @@ class AgentAuthMixin(AliveSubjectAuthMixin):
 
     @database_sync_to_async
     def get_region(self, device):
-        return device.agent.emergency_center.profile.region
+        """An agent device takes its region from the center that owns it."""
+        region = getattr(
+            getattr(getattr(device.agent, 'emergency_center', None), 'profile', None),
+            'region', None,
+        )
+        if region is None:
+            raise AuthenticationFailed(
+                _("This device's center is not assigned to a region"),
+                code="device_region_not_found",
+            )
+        return region
 
 
 class JWTConsumerAuthMixin(JWTAuthMixin):
