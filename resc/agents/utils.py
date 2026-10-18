@@ -40,16 +40,29 @@ class MissionStatus (models.IntegerChoices) :
 
 
 class MissionOutcome (models.IntegerChoices) :
-    """What happened on a mission. Null until the agent reports."""
+    """
+    What happened on a mission. Null until the agent reports, or until the
+    center calls the mission off.
+    """
     SUCCESS = settings.SUCCESS
     FAILURE = settings.FAILURE
+    ABORTED = settings.ABORTED
 
     @classmethod
     def all_types(cls):
         return {
             cls.SUCCESS.value : cls.SUCCESS.label,
-            cls.FAILURE.value : cls.FAILURE.label
+            cls.FAILURE.value : cls.FAILURE.label,
+            cls.ABORTED.value : cls.ABORTED.label
         }
+
+    @classmethod
+    def reportable(cls):
+        """
+        What an agent may report. ABORTED is the center's decision, not the
+        agent's, so it is not on this list.
+        """
+        return (cls.SUCCESS, cls.FAILURE)
 
 
 class AlertStatus (models.IntegerChoices) :

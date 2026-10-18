@@ -165,7 +165,17 @@ def handle_subject_reading(subject_device, point, region, *, seen_at=None, now=N
     """
     The whole response to one subject reading: raise or refresh the alert, and
     route it if it has nowhere to go yet. Returns (alert, created, center).
+
+    A subject being rescued right now is still trapped, so their device keeps
+    transmitting throughout the mission. Those readings must not raise anything:
+    the alert they came from is already CONVERTED, so without this check each
+    one would raise a fresh alert and tell a center about somebody who is
+    already being rescued. Returns (None, False, None) in that case.
     """
+    if Mission.objects.filter(subject_device=subject_device,
+                              status__in=MissionStatus.open_statuses()).exists():
+        return None, False, None
+
     alert, created = raise_or_refresh_alert(subject_device, point, seen_at=seen_at)
     center = route_alert(alert, region, now=now)
     return alert, created, center
@@ -250,7 +260,7 @@ def report_mission(mission, agent, outcome, *, now=None):
     The agent reports how it went. This does not close the mission: the center
     still has to finalise it, and may disagree.
     """
-    if outcome not in MissionOutcome.values:
+    if outcome not in MissionOutcome.reportable():
         raise DispatchError(_('Unknown outcome'), 'bad_outcome')
 
     with transaction.atomic():
@@ -268,14 +278,58 @@ def report_mission(mission, agent, outcome, *, now=None):
         return mission
 
 
+def abort_mission(mission, emergency_center, *, now=None):
+    """
+    The center calls a mission off before the agent has reported.
+
+    Without this an agent is committed for as long as the mission stays open,
+    and a mission the agent never acknowledges would hold them for good, since
+    nothing times an acknowledgement out.
+
+    The outcome is ABORTED rather than FAILURE: calling a dispatch off is not a
+    rescue that failed, and counting it as one would distort what the root panel
+    reports.
+
+    The subject is still trapped, so the alert the mission came from goes back
+    to UNROUTED instead of staying CONVERTED. The device is still transmitting,
+    so the next reading routes it again - to whichever center owns the nearest
+    free agent at that point, which may well be a different one.
+    """
+    with transaction.atomic():
+        mission = Mission.objects.select_for_update().get(pk=mission.pk)
+
+        if mission.emergency_center_id != emergency_center.pk:
+            raise DispatchError(_('This mission belongs to another center'), 'not_your_mission')
+        if mission.status not in (MissionStatus.JUST_DEFINED, MissionStatus.IN_PROGRESS):
+            raise DispatchError(
+                _('Only a mission the agent has not reported on can be called off'),
+                'not_abortable',
+            )
+
+        mission.status = MissionStatus.CLOSED
+        mission.outcome = MissionOutcome.ABORTED
+        mission.closed_at = now or timezone.now()
+        mission.save(update_fields=['status', 'outcome', 'closed_at', 'updated'])
+
+        Agent.objects.filter(pk=mission.agent_id).update(busy=False)
+
+        if mission.alert_id is not None:
+            DistressAlert.objects.filter(
+                pk=mission.alert_id, status=AlertStatus.CONVERTED,
+            ).update(status=AlertStatus.UNROUTED, emergency_center=None)
+
+        return mission
+
+
 def finalize_mission(mission, emergency_center, *, outcome=None, now=None):
     """
     The center closes the mission and releases the agent.
 
     `outcome` overrides what the agent reported, for the case where the center
-    disagrees; left out, the agent's report stands.
+    disagrees; left out, the agent's report stands. To call a mission off before
+    the agent reports, use abort_mission.
     """
-    if outcome is not None and outcome not in MissionOutcome.values:
+    if outcome is not None and outcome not in MissionOutcome.reportable():
         raise DispatchError(_('Unknown outcome'), 'bad_outcome')
 
     with transaction.atomic():

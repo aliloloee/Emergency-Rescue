@@ -211,8 +211,11 @@ REPORTED      = 3, _('REPORTED')
 CLOSED        = 4, _('CLOSED')
 
 # OUTCOME OF MISSIONS - what happened, as opposed to where in the lifecycle it is.
+# ABORTED is for a mission the center called off, which is neither a rescue that
+# worked nor one that failed, and should not be counted as either.
 SUCCESS       = 1, _('SUCCESS')
 FAILURE       = 2, _('FAILURE')
+ABORTED       = 3, _('ABORTED')
 
 # STATUS OF DISTRESS ALERTS (the "possible mission" raised by a transmitting device).
 # UNROUTED means no free agent was available anywhere in the region when the alert was

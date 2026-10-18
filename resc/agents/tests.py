@@ -366,6 +366,101 @@ class MissionLifecycleTests(DispatchTestCase):
             services.report_mission(self.mission, self.a_near, 99)
         self.assertEqual(caught.exception.code, 'bad_outcome')
 
+    def test_a_reading_during_a_mission_does_not_raise_another_alert(self):
+        """
+        The subject is still trapped while being rescued, so their device keeps
+        transmitting. Those readings must not tell a center about somebody who
+        is already being rescued.
+        """
+        before = DistressAlert.objects.count()
+
+        alert, created, centre = services.handle_subject_reading(
+            self.subject_device, ORIGIN, self.region, now=self.now,
+        )
+
+        self.assertIsNone(alert)
+        self.assertFalse(created)
+        self.assertIsNone(centre)
+        self.assertEqual(DistressAlert.objects.count(), before)
+
+    def test_center_can_abort_a_mission_the_agent_never_acknowledged(self):
+        """The case that would otherwise hold an agent busy for good."""
+        mission = services.abort_mission(self.mission, self.centre_a)
+
+        self.assertEqual(mission.status, MissionStatus.CLOSED)
+        self.assertEqual(mission.outcome, MissionOutcome.ABORTED)
+        self.assertIsNotNone(mission.closed_at)
+
+        self.a_near.refresh_from_db()
+        self.assertFalse(self.a_near.busy)
+
+    def test_center_can_abort_a_mission_already_under_way(self):
+        services.acknowledge_mission(self.mission, self.a_near)
+        mission = services.abort_mission(self.mission, self.centre_a)
+
+        self.assertEqual(mission.status, MissionStatus.CLOSED)
+        self.a_near.refresh_from_db()
+        self.assertFalse(self.a_near.busy)
+
+    def test_aborting_does_not_abandon_the_subject(self):
+        """
+        The alert goes back to unrouted, so the next reading from the still
+        transmitting device routes it again - possibly to another center.
+        """
+        services.abort_mission(self.mission, self.centre_a)
+
+        self.mission.alert.refresh_from_db()
+        self.assertEqual(self.mission.alert.status, AlertStatus.UNROUTED)
+        self.assertIsNone(self.mission.alert.emergency_center)
+
+        alert, created, centre = services.handle_subject_reading(
+            self.subject_device, ORIGIN, self.region, now=self.now,
+        )
+        self.assertFalse(created, 'the same alert is reused, not a new one')
+        self.assertEqual(alert.pk, self.mission.alert.pk)
+        self.assertEqual(centre, self.centre_a)
+
+    def test_aborting_can_hand_the_subject_to_a_different_center(self):
+        services.abort_mission(self.mission, self.centre_a)
+        # Centre A's agents are now the far ones; B's 2 km agent is nearest.
+        Agent.objects.filter(pk=self.a_near.pk).update(busy=True)
+
+        _, _, centre = services.handle_subject_reading(
+            self.subject_device, ORIGIN, self.region, now=self.now,
+        )
+        self.assertEqual(centre, self.centre_b)
+
+    def test_another_center_cannot_abort(self):
+        with self.assertRaises(services.DispatchError) as caught:
+            services.abort_mission(self.mission, self.centre_b)
+        self.assertEqual(caught.exception.code, 'not_your_mission')
+
+    def test_cannot_abort_once_the_agent_has_reported(self):
+        """After a report it is finalise, not abort - the work was done."""
+        services.acknowledge_mission(self.mission, self.a_near)
+        services.report_mission(self.mission, self.a_near, MissionOutcome.SUCCESS)
+
+        with self.assertRaises(services.DispatchError) as caught:
+            services.abort_mission(self.mission, self.centre_a)
+        self.assertEqual(caught.exception.code, 'not_abortable')
+
+    def test_an_agent_cannot_report_aborted(self):
+        """Calling a mission off is the center's decision, not the agent's."""
+        services.acknowledge_mission(self.mission, self.a_near)
+
+        with self.assertRaises(services.DispatchError) as caught:
+            services.report_mission(self.mission, self.a_near, MissionOutcome.ABORTED)
+        self.assertEqual(caught.exception.code, 'bad_outcome')
+
+    def test_an_aborted_agent_can_be_dispatched_again(self):
+        services.abort_mission(self.mission, self.centre_a)
+
+        alert, _, _ = services.handle_subject_reading(
+            self.subject_device, ORIGIN, self.region, now=self.now,
+        )
+        mission = services.create_mission(alert, self.a_near, self.centre_a)
+        self.assertEqual(mission.status, MissionStatus.JUST_DEFINED)
+
     def test_closing_a_mission_frees_the_agent_for_the_next_one(self):
         """The whole cycle, end to end."""
         services.acknowledge_mission(self.mission, self.a_near)
