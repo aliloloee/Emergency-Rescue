@@ -2,12 +2,12 @@
 
 ## **Project Status** 🚧
 **Currently in development**  
-This project is actively being improved and expanded. New features and enhancements are in progress!
+This project is actively being improved and expanded. New features and enhancements are in progress — see the [Roadmap](#roadmap) for what works today, what is being built, and what has deliberately been left for later.
 
 ---
 
 ## **Project Description**
-The **Emergency Rescue Platform** is a backend system designed to support disaster response efforts by identifying and rescuing individuals trapped under rubble (e.g., post-earthquake scenarios). The platform integrates with custom devices capable of transmitting critical information, such as location and vital signs, even under rubble. This data is processed and sent to the nearest emergency centers to facilitate timely rescue operations.
+The **Emergency Rescue Platform** is a backend system designed to support disaster response efforts by identifying and rescuing individuals trapped under rubble (e.g., post-earthquake scenarios). The platform integrates with custom devices capable of transmitting critical information, such as location and vital signs, even under rubble. This data is processed and routed to the emergency center best placed to respond, to facilitate timely rescue operations.
 
 ---
 
@@ -18,13 +18,13 @@ The **Emergency Rescue Platform** is a backend system designed to support disast
    - Vital signs (e.g., heart rate).
 
 2. **Data Processing**:  
-   The platform processes this data through RESTful APIs and stores it in a geospatial database.
+   Readings arrive over WebSockets, are buffered in Redis, and are written to a geospatial database in batches by a background worker.
 
-3. **Automated Workflow**:  
-   The system matches the trapped individual with the nearest emergency center and assigns an agent for rescue.
+3. **Dispatch**:  
+   The system finds the nearest free rescue agent and alerts the emergency center that owns it, presenting a *possible mission* alongside that center's own agents ranked by distance. A person at the center decides — missions are never created automatically.
 
 4. **Real-Time Updates**:  
-   Tracks and updates the mission status, ensuring that emergency centers can monitor operations dynamically.
+   The agent's device acknowledges the assignment and later reports the outcome, which the center then finalises. Emergency centers follow every device and every mission as it happens.
 
 ---
 
@@ -218,7 +218,15 @@ If you have done everything correctly, in *production* mode the base url will be
 
 ### **Admin page**:
 
-When the application is up and running, you can go to the url */admin/* and log into admin panel with username and password you had previously added to `.env` file. If you have done the recommended loading of fixtures, you can expect to see the admin panel as below:
+When the application is up and running, you can go to the url */admin/* and log into the admin panel. If you have done the recommended loading of fixtures, you can expect to see the admin panel as below:
+
+> **A note on the admin credentials.** The superuser described in your `.env` is created by the `init_admin` command, which only runs when the user table is empty — and it runs at container start, *before* you load the fixtures. Loading `data_new.json` then replaces the user rows, so that superuser no longer exists. If you loaded the fixtures, create an admin account for yourself with:
+>
+> ```bash
+> docker-compose exec web python /app/resc/manage.py createsuperuser
+> ```
+>
+> If you skip the fixtures, the `.env` credentials work exactly as described above.
 
 ![Admin Panel](./readme/admin/overview.png "Admin Panel")
 Admin Panel
@@ -259,3 +267,42 @@ To simulate the functionality of the devices, two scripts have been created and 
 These scripts communicate directly with the backend system, emulating real-world data transmission. The `GIF` below demonstrates what the user *Emergency-center 1* sees on their dashboard panel. 
 
 ![Details of a SubjectDevice Instance](./readme/dashboard/ezgif.com-speed.gif "Details of a SubjectDevice Instance")
+
+---
+
+## **Roadmap**
+
+### **Working today**
+
+- **Device telemetry.** Subject and agent devices stream location (and, for subjects, heart rate) over WebSockets, authenticated per device with an API key. Readings are buffered in Redis and written to PostgreSQL in batches by a Celery worker, so a burst of traffic does not become a burst of database writes.
+- **Live regional map.** An emergency center sees every device in its own region move in real time, over a Django Channels feed scoped to that region.
+- **Authentication and authorisation.** Devices authenticate with an API key; browsers with a JWT held in an HTTP-only cookie, refreshed transparently. A center can only ever subscribe to its own region, and only accounts of the emergency-center type can subscribe at all.
+- **Agent availability feed.** A separate socket publishes which agents are free, so a dispatch panel can be built against it.
+
+### **In progress — automated dispatch**
+
+The feature this platform exists for: turning a distress signal into a rescue.
+
+A subject device only transmits when something has gone wrong, so transmission *is* the distress signal. The system finds the nearest free rescue agent, and alerts **the emergency center that owns that agent** — routing follows the agent rather than the center, because the point is to reach the subject quickly. That center sees a *possible mission*, together with its own available agents ranked by distance, and a human decides. Missions are never created automatically.
+
+Once an agent is assigned, their device acknowledges the assignment, which is what puts the mission in progress and starts recording their track. When the work is done the agent reports the outcome, and the center then finalises the mission — two separate steps, so that "the agent says it worked" and "the center agrees" stay distinct facts.
+
+**Status:** the domain rules are implemented and covered by 42 tests — nearest-agent ranking, alert deduplication and routing, mission creation with ownership checks, and the full lifecycle including a center's ability to call a mission off. What remains is connecting them to the WebSocket layer and building the panels.
+
+### **Planned**
+
+- **Emergency center dispatch panel** — the possible-mission list, ranked agents, and the dispatch and finalise controls.
+- **Root panel** — a system-wide view, for an administrator rather than a single center, of all centers, agents, subjects and missions.
+- **A downlink to agent devices**, so assignments can be pushed to them and acknowledged.
+- **Updated simulation notebooks**, so the scripts in `communication-scripts/` can acknowledge assignments and report outcomes.
+
+### **Known limitations**
+
+Deliberate scope choices for a first version, listed so they are not mistaken for oversights:
+
+- **No escalation when a center does not respond.** An alert routed to a center stays there; nothing times out or reassigns it. (A mission a center explicitly *calls off* does return the subject to the routing queue.)
+- **No acknowledgement timeout.** If an agent's device never acknowledges, the mission stays open until a human intervenes.
+- **Ranking is straight-line distance**, not travel time, so the nearest agent as the crow flies may not be the quickest to arrive.
+- **Dismissing an alert does not silence the device.** If a center dismisses a false alarm and the device keeps transmitting, a new alert is raised — correct for a long rescue, unhelpful for a false alarm.
+- **Heart rate is recorded and displayed but not acted on.** It does not yet influence triage or prioritisation.
+- **The Redis client in the consumers is synchronous.** Fine at demonstration scale; a production deployment would want `redis.asyncio` so that buffering cannot block the event loop.
