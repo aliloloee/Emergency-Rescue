@@ -6,10 +6,14 @@ from django.utils.translation import gettext_lazy as _
 
 from resc.redis_conf import RSCREDIS
 from agents import services
-from agents.models import SubjectRecords, AgentRecords, Agent, Mission, DistressAlert
+from agents.models import (
+    SubjectRecords, AgentRecords, Agent, Mission, DistressAlert, Region, SubjectDevice,
+)
 from agents.tasks import export_from_redis_to_db
 from agents.mixinx import AliveSubjectAuthMixin, AgentAuthMixin, JWTConsumerAuthMixin
-from agents.utils import ModelType, MissionStatus
+from agents.utils import ModelType, MissionStatus, AlertStatus
+from profiles.models import Profile
+from profiles.utils import ProfileType
 
 import json
 
@@ -43,6 +47,37 @@ def agent_group_name(agent_pk) :
     and if they happen to carry two devices both should hear about it.
     """
     return f'agent-{agent_pk}'
+
+
+# The root panel watches the whole system rather than one region or one center,
+# so alerts and missions are published here as well as to whoever owns them.
+ROOT_GROUP_NAME = 'root-panel'
+
+
+async def publish_alert(channel_layer, center_pk, payload) :
+    """Send a possible mission to the center it was routed to, and to the root."""
+    if center_pk is not None :
+        await channel_layer.group_send(
+            center_group_name(center_pk),
+            {'type': 'alert_update', 'value': payload},
+        )
+    await channel_layer.group_send(
+        ROOT_GROUP_NAME,
+        {'type': 'alert_update', 'value': payload},
+    )
+
+
+async def publish_mission(channel_layer, center_pk, payload) :
+    """Send a mission update to the center that owns it, and to the root."""
+    if center_pk is not None :
+        await channel_layer.group_send(
+            center_group_name(center_pk),
+            {'type': 'mission_update', 'value': payload},
+        )
+    await channel_layer.group_send(
+        ROOT_GROUP_NAME,
+        {'type': 'mission_update', 'value': payload},
+    )
 
 
 def alert_payload(alert, *, heartrate=None) :
@@ -267,13 +302,7 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
         await self.notify_center(center_pk, payload)
 
     async def notify_center(self, center_pk, payload) :
-        await self.channel_layer.group_send(
-            center_group_name(center_pk),
-            {
-                'type': 'mission_update',
-                'value': payload,
-            }
-        )
+        await publish_mission(self.channel_layer, center_pk, payload)
 
     async def mission_assigned(self, event) :
         """Group handler: the center has dispatched this agent."""
@@ -571,10 +600,7 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
 
     async def handle_dismiss(self, message) :
         payload = await self._dismiss(message['alert_id'])
-        await self.channel_layer.group_send(
-            self.center_group_name,
-            {'type': 'alert_update', 'value': payload},
-        )
+        await publish_alert(self.channel_layer, self.center.pk, payload)
 
     @database_sync_to_async
     def _abort(self, mission_id) :
@@ -606,10 +632,7 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         await self.broadcast_roster()
 
     async def broadcast_mission(self, payload) :
-        await self.channel_layer.group_send(
-            self.center_group_name,
-            {'type': 'mission_update', 'value': payload},
-        )
+        await publish_mission(self.channel_layer, self.center.pk, payload)
 
     async def broadcast_roster(self) :
         """
@@ -620,6 +643,154 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
             self.center_group_name,
             {'type': 'agents_update', 'value': await self.get_unoccupied_agents()},
         )
+
+
+class RootPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
+    """
+    A system-wide view, for an administrator rather than a single center.
+
+    Read only: it watches every region, every center's alerts and every
+    mission, but it dispatches nothing. Deciding a mission belongs to the
+    center that owns the agent, and giving an administrator a way around that
+    would quietly undo the rule.
+
+    This is the one socket that is not scoped to a region - it joins every
+    region's feed instead - which is why it does not require the account to
+    have one. The SUPER profile in the fixture has no region at all.
+    """
+
+    allowed_profile_types = (ProfileType.SUPER, )
+    requires_region = False
+
+    # How much closed history to send on connect. Open work is always included;
+    # this only bounds the tail.
+    closed_missions_shown = 20
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.region_groups = []
+
+    async def connect(self):
+        if not await super().connect():
+            return
+
+        self.account = self.scope["account"]
+
+        await self.channel_layer.group_add(ROOT_GROUP_NAME, self.channel_name)
+
+        # Every region's device feed, so the map covers the whole system rather
+        # than one city. Regions created after this socket opened are not
+        # picked up until it reconnects.
+        self.region_groups = await self.get_region_groups()
+        for group in self.region_groups :
+            await self.channel_layer.group_add(group, self.channel_name)
+
+        await self.accept()
+        await self.send_snapshot()
+
+    async def disconnect(self, close_code=None):
+        # connect() may have bailed out before any group was joined
+        if getattr(self, 'region_groups', None) is not None :
+            await self.channel_layer.group_discard(ROOT_GROUP_NAME, self.channel_name)
+            for group in self.region_groups :
+                await self.channel_layer.group_discard(group, self.channel_name)
+
+    @database_sync_to_async
+    def get_region_groups(self) :
+        return [f'region-{pk}' for pk in Region.objects.values_list('pk', flat=True)]
+
+    # ------------------------------------------------------------- feeds --
+
+    async def echo(self, event) :
+        """A device moved, in any region."""
+        await self.send(text_data=json.dumps({'device_data': event['value']}))
+
+    async def alert_update(self, event) :
+        await self.send(text_data=json.dumps({'alert': event['value']}))
+
+    async def mission_update(self, event) :
+        await self.send(text_data=json.dumps({'mission': event['value']}))
+
+    # ---------------------------------------------------------- snapshot --
+
+    @database_sync_to_async
+    def get_snapshot(self) :
+        """
+        Everything worth seeing on arrival, so the panel starts populated
+        rather than waiting for something to happen.
+        """
+        centers = (Profile.objects
+                   .filter(type=ProfileType.EMERGENCY_CENTER)
+                   .select_related('user', 'region', 'location'))
+
+        agents = (Agent.objects
+                  .select_related('emergency_center')
+                  .prefetch_related('devices')
+                  .order_by('emergency_center_id', 'name'))
+
+        open_missions = (Mission.objects
+                         .filter(status__in=MissionStatus.open_statuses())
+                         .select_related('agent', 'emergency_center'))
+        closed_missions = (Mission.objects
+                           .exclude(status__in=MissionStatus.open_statuses())
+                           .select_related('agent', 'emergency_center')
+                           .order_by('-closed_at')[:self.closed_missions_shown])
+
+        alerts = (DistressAlert.objects
+                  .filter(status__in=AlertStatus.open_statuses())
+                  .select_related('subject_device', 'emergency_center')
+                  .order_by('-last_seen'))
+
+        def located(device) :
+            if device is None or device.last_location is None :
+                return {'lat': None, 'lng': None, 'last_seen': None}
+            return {
+                'lat': device.last_location.y,
+                'lng': device.last_location.x,
+                'last_seen': device.last_seen.isoformat() if device.last_seen else None,
+            }
+
+        def agent_row(agent) :
+            # The agent's own position is whichever device last reported one.
+            reporting = [d for d in agent.devices.all() if d.last_location is not None]
+            latest = max(reporting, key=lambda d: d.last_seen, default=None) if reporting else None
+            return {
+                'id': agent.pk,
+                'name': agent.name,
+                'busy': agent.busy,
+                'center_id': agent.emergency_center_id,
+                'center': str(agent.emergency_center),
+                **located(latest),
+            }
+
+        def mission_row(mission) :
+            return {**mission_payload(mission),
+                    'center': str(mission.emergency_center)}
+
+        return {
+            'centers': [{
+                'id': profile.user_id,
+                'name': str(profile.user),
+                'region': str(profile.region) if profile.region else None,
+                'lat': profile.location.location.y if profile.location else None,
+                'lng': profile.location.location.x if profile.location else None,
+            } for profile in centers],
+            'agents': [agent_row(agent) for agent in agents],
+            'subject_devices': [{
+                'id': device.pk,
+                'name': device.name,
+                'subject': str(device.subject) if device.subject else None,
+                **located(device),
+            } for device in SubjectDevice.objects.select_related('subject')],
+            'alerts': [{**alert_payload(alert),
+                        'center': str(alert.emergency_center) if alert.emergency_center else None}
+                       for alert in alerts],
+            'open_missions': [mission_row(mission) for mission in open_missions],
+            'closed_missions': [mission_row(mission) for mission in closed_missions],
+        }
+
+    async def send_snapshot(self) :
+        await self.send(text_data=json.dumps({'snapshot': await self.get_snapshot()}))
 
 
 class EmergencyReceiveConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
@@ -738,13 +909,15 @@ class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
         alert, created, center = services.handle_subject_reading(
                                         self.device, point, self.region,
                                         )
-        if alert is None or center is None :
-            # Either the subject already has a mission under way, or no agent
-            # was free anywhere in the region and the alert is still unrouted.
-            # A later reading will route it.
+        if alert is None :
+            # The subject already has a mission under way, so this reading is
+            # part of a rescue in progress and raises nothing.
             return None, None
 
-        return center.pk, alert_payload(alert)
+        # center is None when no agent was free anywhere in the region. The
+        # alert still goes out, with nobody to address it to: the root panel
+        # watches for exactly that, and a later reading will route it.
+        return (center.pk if center is not None else None), alert_payload(alert)
 
     async def raise_alert(self, lat, lng, heartrate) :
         center_pk, payload = await self._handle_reading(lat, lng)
@@ -752,13 +925,7 @@ class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
             return
 
         payload['heartrate'] = heartrate
-        await self.channel_layer.group_send(
-            center_group_name(center_pk),
-            {
-                'type': 'alert_update',
-                'value': payload,
-            }
-        )
+        await publish_alert(self.channel_layer, center_pk, payload)
 
     async def processing(self, event) :
         data = event['value']

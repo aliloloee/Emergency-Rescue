@@ -992,3 +992,165 @@ class SocketAuthTests(ConsumerTestCase):
         output = await communicator.receive_output(timeout=2)
         await communicator.disconnect()
         self.assertEqual(output.get('code'), 4001)
+
+
+class RootPanelTests(ConsumerTestCase):
+    """
+    The administrator's system-wide view: every region, every center's alerts,
+    every mission - and no way to dispatch anything.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.root = User.objects.create_user(
+            email='root@resc.com', firstname='R', lastname='Oot', password='x',
+        )
+        # Deliberately left with no region: a root account belongs to none, and
+        # the fixture's own SUPER profile has none either.
+        Profile.objects.filter(user=self.root).update(
+            type=ProfileType.SUPER, region=None,
+        )
+
+    def root_panel(self):
+        return WebsocketCommunicator(
+            test_application, '/ws/root/panel/',
+            headers=[(b'cookie', f'access_token={self.token_for(self.root)}'.encode())],
+        )
+
+    async def test_a_super_account_with_no_region_is_let_in(self):
+        """
+        Every other socket requires a region. Demanding one here would lock out
+        the only kind of account this panel is for.
+        """
+        panel = await self.connected(self.root_panel())
+        self.assertIsNotNone(await self.await_message(panel, 'snapshot'))
+        await self.close_sockets()
+
+    async def test_a_center_account_is_refused(self):
+        communicator = WebsocketCommunicator(
+            test_application, '/ws/root/panel/',
+            headers=[(b'cookie', f'access_token={self.token_for(self.centre_a)}'.encode())],
+        )
+        await communicator.connect()
+        output = await communicator.receive_output(timeout=2)
+        await communicator.disconnect()
+        self.assertEqual(output.get('code'), 4005)
+
+    async def test_a_super_account_is_still_refused_the_center_panel(self):
+        """
+        The two panels have different gates. Opening one up must not open the
+        other: a root account has no business dispatching.
+        """
+        communicator = WebsocketCommunicator(
+            test_application, '/ws/center/panel/',
+            headers=[(b'cookie', f'access_token={self.token_for(self.root)}'.encode())],
+        )
+        await communicator.connect()
+        output = await communicator.receive_output(timeout=2)
+        await communicator.disconnect()
+        self.assertEqual(output.get('code'), 4005)
+
+    async def test_the_snapshot_covers_the_whole_system(self):
+        panel = await self.connected(self.root_panel())
+        snapshot = await self.await_message(panel, 'snapshot')
+
+        self.assertEqual(
+            sorted(center['name'] for center in snapshot['centers']),
+            sorted([str(self.centre_a), str(self.centre_b)]),
+            'both centers, not just one region',
+        )
+        self.assertEqual(
+            sorted(agent['name'] for agent in snapshot['agents']),
+            ['a-far', 'a-near', 'b-mid'],
+            "every center's agents, which no center panel ever sees",
+        )
+        self.assertIn('victim-device', [d['name'] for d in snapshot['subject_devices']])
+
+        near = next(a for a in snapshot['agents'] if a['name'] == 'a-near')
+        self.assertFalse(near['busy'])
+        self.assertAlmostEqual(near['lat'], north_of(ORIGIN, 500).y, places=4)
+        await self.close_sockets()
+
+    async def test_it_sees_alerts_routed_to_any_center(self):
+        panel = await self.connected(self.root_panel())
+        await self.await_message(panel, 'snapshot')
+
+        await self.send_subject_reading(heartrate=77)
+
+        alert = await self.await_message(panel, 'alert')
+        self.assertIsNotNone(alert, 'the root watches every center, not one')
+        self.assertEqual(alert['heartrate'], 77)
+        await self.close_sockets()
+
+    async def test_it_sees_an_alert_that_no_center_could_be_given(self):
+        """
+        An alert with no free agent anywhere has nobody to notify, which is
+        precisely the situation an administrator needs to notice.
+        """
+        await self.db(Agent.objects.update)(busy=True)
+
+        panel = await self.connected(self.root_panel())
+        await self.await_message(panel, 'snapshot')
+        await self.send_subject_reading()
+
+        alert = await self.await_message(panel, 'alert')
+        self.assertIsNotNone(alert, 'an unrouted alert must still reach the root')
+        self.assertEqual(alert['status'], AlertStatus.UNROUTED)
+        await self.close_sockets()
+
+    async def test_it_follows_a_mission_through_its_whole_life(self):
+        panel = await self.connected(self.root_panel())
+        center = await self.connected(self.panel_for(self.centre_a))
+        agent_device = await self.connected(
+            self.device_for('/ws/agent/send/', self.a_near_device)
+        )
+        await self.await_message(panel, 'snapshot')
+
+        await self.send_subject_reading()
+        alert = await self.await_message(center, 'alert')
+
+        await center.send_json_to({
+            'type': 'dispatch', 'alert_id': alert['id'], 'agent_id': self.a_near.pk,
+        })
+        mission = await self.await_message(panel, 'mission')
+        self.assertIsNotNone(mission, 'the root should see the dispatch')
+        self.assertEqual(mission['status'], MissionStatus.JUST_DEFINED)
+
+        await agent_device.send_json_to({
+            'type': 'mission_ack', 'mission_id': mission['id'],
+        })
+        self.assertEqual(
+            (await self.await_message(panel, 'mission'))['status'],
+            MissionStatus.IN_PROGRESS,
+            'and the acknowledgement, which came from the device not the center',
+        )
+        await self.close_sockets()
+
+    async def test_it_sees_devices_moving_in_every_region(self):
+        panel = await self.connected(self.root_panel())
+        await self.await_message(panel, 'snapshot')
+
+        agent_device = await self.connected(
+            self.device_for('/ws/agent/send/', self.a_near_device)
+        )
+        await agent_device.send_json_to({
+            'lat': 44.4980, 'lng': 11.3450, 'timestamp': '2026-10-19 10:00:00',
+        })
+
+        reading = await self.await_message(panel, 'device_data')
+        self.assertIsNotNone(reading)
+        self.assertAlmostEqual(reading['lat'], 44.4980, places=4)
+        await self.close_sockets()
+
+    async def test_it_cannot_dispatch(self):
+        """Read only: deciding a mission belongs to the center that owns the agent."""
+        panel = await self.connected(self.root_panel())
+        await self.await_message(panel, 'snapshot')
+
+        await panel.send_json_to({'type': 'dispatch', 'alert_id': 1, 'agent_id': 1})
+
+        # The consumer has no receive(), so the message is simply ignored - what
+        # matters is that nothing was created.
+        await asyncio.sleep(0.4)
+        self.assertEqual(await self.db(Mission.objects.count)(), 0)
+        await self.close_sockets()

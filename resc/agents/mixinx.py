@@ -24,6 +24,9 @@ class JWTAuthMixin:
     # the socket and the page stay consistent. Override per consumer if needed.
     allowed_profile_types = (ProfileType.EMERGENCY_CENTER, )
 
+    # Whether this socket's feed is scoped to a region. The root panel is not.
+    requires_region = True
+
     @staticmethod
     def get_access_token(scope):
         """
@@ -76,7 +79,11 @@ class JWTAuthMixin:
         if profile.type not in self.allowed_profile_types:
             raise PermissionDenied(_('This account may not watch a region feed'), code='profile_type_not_allowed')
 
-        if profile.region is None:
+        # A region is required for the feeds that are scoped to one, which is
+        # all of them bar the root panel: that watches the whole system and so
+        # belongs to no single region. Note the SUPER account in the fixture has
+        # no region at all, so demanding one here would lock it out entirely.
+        if self.requires_region and profile.region is None:
             raise AuthenticationFailed(_('User is not assigned to a region'), code='region_not_found')
 
         return user, profile.region
