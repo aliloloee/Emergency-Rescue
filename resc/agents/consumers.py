@@ -5,12 +5,42 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from resc.redis_conf import RSCREDIS
+from agents import services
 from agents.models import SubjectRecords, AgentRecords, Agent, Mission
 from agents.tasks import export_from_redis_to_db
 from agents.mixinx import AliveSubjectAuthMixin, AgentAuthMixin, JWTConsumerAuthMixin
 from agents.utils import ModelType, MissionStatus
 
 import json
+
+
+def center_group_name(emergency_center_pk) :
+    """
+    Alerts go to one center rather than to everybody in the region, so they need
+    a group keyed by center. Every other group here is region-wide.
+    """
+    return f'center-{emergency_center_pk}'
+
+
+def alert_payload(alert, *, heartrate=None) :
+    """
+    One shape for a possible mission, used both for the backlog sent on connect
+    and for live updates, so the two cannot drift apart.
+
+    Heart rate belongs to the reading rather than to the alert, so it is only
+    present on a live push.
+    """
+    return {
+        'id': alert.pk,
+        'status': alert.status,
+        'subject_device_id': alert.subject_device_id,
+        'subject_device_name': alert.subject_device.name,
+        'lat': alert.location.y,
+        'lng': alert.location.x,
+        'heartrate': heartrate,
+        'first_seen': alert.first_seen.isoformat(),
+        'last_seen': alert.last_seen.isoformat(),
+    }
 
 
 @database_sync_to_async
@@ -201,7 +231,16 @@ class AgentConsumer(AgentAuthMixin, AsyncWebsocketConsumer):
         self.counter = self.counter + 1
 
 
-class AgentPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
+class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
+    """
+    An emergency center's own panel.
+
+    Two feeds share this socket because they are two halves of one decision: who
+    needs help, and who is free to go. It carries the roster of available agents,
+    which is region-wide, and the possible missions routed to *this* center,
+    which are not - hence the per-center group alongside the regional one.
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -210,19 +249,33 @@ class AgentPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
             return
 
         self.region = self.scope["region"]
+        self.center = self.scope["account"]
+
         self.agents_panel_group_name = f'agents-panel-region-{self.region.pk}'
+        self.center_group_name = center_group_name(self.center.pk)
+
         await self.channel_layer.group_add(
             self.agents_panel_group_name,
             self.channel_name
         )
+        await self.channel_layer.group_add(
+            self.center_group_name,
+            self.channel_name
+        )
+
         await self.accept()
         await self.send_unoccupied_agents()
+        # An alert raised while nobody was connected is still waiting to be
+        # decided, so an operator starts from the backlog rather than from
+        # whatever happens to arrive next.
+        await self.send_open_alerts()
 
     async def disconnect(self, close_code=None):
-        # connect() may have bailed out before the group was joined
-        group = getattr(self, 'agents_panel_group_name', None)
-        if group:
-            await self.channel_layer.group_discard(group, self.channel_name)
+        # connect() may have bailed out before the groups were joined
+        for attribute in ('agents_panel_group_name', 'center_group_name') :
+            group = getattr(self, attribute, None)
+            if group:
+                await self.channel_layer.group_discard(group, self.channel_name)
 
     async def agents_update(self, event) :
         """
@@ -234,6 +287,22 @@ class AgentPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         """
         await self.send(text_data=json.dumps({
             'unoccupied_agents': event['value']
+        }))
+
+    async def alert_update(self, event) :
+        """Group handler: a possible mission was raised, or has moved."""
+        await self.send(text_data=json.dumps({
+            'alert': event['value']
+        }))
+
+    @database_sync_to_async
+    def get_open_alerts(self) :
+        return [alert_payload(alert)
+                for alert in services.open_alerts_for_center(self.center)]
+
+    async def send_open_alerts(self) :
+        await self.send(text_data=json.dumps({
+            'open_alerts': await self.get_open_alerts()
         }))
 
     @database_sync_to_async
@@ -334,8 +403,11 @@ class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
 
             await update_device_position(self.device, data["lat"], data["lng"])
 
-            # Unlike an agent device, a subject device only transmits during a
-            # disaster, so everything it sends is worth recording.
+            # A subject device only transmits during a disaster, so the reading
+            # itself is the distress signal and this is what raises the alert.
+            await self.raise_alert(data["lat"], data["lng"], data.get("heartrate"))
+
+            # For the same reason, everything it sends is worth recording.
             await self.channel_layer.group_send(
                 self.publish_group_name,
                 {
@@ -354,6 +426,41 @@ class AliveSubjectConsumer(AliveSubjectAuthMixin, AsyncWebsocketConsumer):
                     'value': {**device_data}
                 }
             )
+
+    @database_sync_to_async
+    def _handle_reading(self, lat, lng) :
+        """
+        Hand the reading to the dispatch rules, and shape whatever comes back.
+
+        The payload is built here, inside the sync context, because reading
+        alert.subject_device.name lazily from the async consumer would raise
+        SynchronousOnlyOperation.
+        """
+        point = Point(float(lng), float(lat), srid=4326)
+        alert, created, center = services.handle_subject_reading(
+                                        self.device, point, self.region,
+                                        )
+        if alert is None or center is None :
+            # Either the subject already has a mission under way, or no agent
+            # was free anywhere in the region and the alert is still unrouted.
+            # A later reading will route it.
+            return None, None
+
+        return center.pk, alert_payload(alert)
+
+    async def raise_alert(self, lat, lng, heartrate) :
+        center_pk, payload = await self._handle_reading(lat, lng)
+        if payload is None :
+            return
+
+        payload['heartrate'] = heartrate
+        await self.channel_layer.group_send(
+            center_group_name(center_pk),
+            {
+                'type': 'alert_update',
+                'value': payload,
+            }
+        )
 
     async def processing(self, event) :
         data = event['value']

@@ -181,6 +181,21 @@ def handle_subject_reading(subject_device, point, region, *, seen_at=None, now=N
     return alert, created, center
 
 
+def open_alerts_for_center(emergency_center):
+    """
+    The possible missions this center still has to decide on.
+
+    An operator who connects after an alert was raised must still see it -
+    surviving nobody being logged in is half the reason alerts are rows rather
+    than passing messages.
+    """
+    return (DistressAlert.objects
+            .filter(emergency_center=emergency_center,
+                    status__in=AlertStatus.open_statuses())
+            .select_related('subject_device')
+            .order_by('-last_seen'))
+
+
 def dismiss_alert(alert, emergency_center):
     """Decline a possible mission. Only the center it was routed to may do so."""
     if alert.emergency_center_id != emergency_center.pk:

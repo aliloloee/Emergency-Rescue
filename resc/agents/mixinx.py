@@ -39,9 +39,9 @@ class JWTAuthMixin:
         return cookies.get(settings.SIMPLE_JWT['ACCESS_TOKEN_NAME'])
 
     @database_sync_to_async
-    def get_region(self, access_token):
+    def get_identity(self, access_token):
         """
-        Resolve the region of the user owning the access token.
+        Resolve (account, region) for the user owning the access token.
 
         A bad token raises AuthenticationFailed so the consumer can close with
         4001 and the browser knows to refresh its token and reconnect. Returning
@@ -79,10 +79,25 @@ class JWTAuthMixin:
         if profile.region is None:
             raise AuthenticationFailed(_('User is not assigned to a region'), code='region_not_found')
 
-        return profile.region
+        return user, profile.region
 
     async def authenticate(self, scope):
-        scope['region'] = await self.get_region(self.get_access_token(scope))
+        """
+        Puts both the account and its region in scope.
+
+        The account matters because feeds are not all region-wide: an alert goes
+        to one center, and a center may only dispatch its own agents, so a
+        consumer has to know *which* center is connected rather than only where
+        it is.
+
+        This deliberately does not touch scope['user']. AuthMiddlewareStack fills
+        that in from the session cookie, and the whole point of this mixin is
+        that the access token is what gets verified - having the two disagree
+        would be a trap.
+        """
+        account, region = await self.get_identity(self.get_access_token(scope))
+        scope['account'] = account
+        scope['region'] = region
 
 
 class BaseAuthMixin:
