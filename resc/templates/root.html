@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% load static %}
+{% load websocket_tags %}
+
+
+{% block title %}Root &middot; Emergency Rescue{% endblock %}
+
+
+{% block content %}
+
+<div class="shell">
+
+  <header class="topbar topbar--root">
+    <span class="topbar__brand">Emergency Rescue</span>
+    <span class="topbar__tag">ROOT</span>
+    <span class="topbar__spacer"></span>
+    <span class="status status--down" id="root-status">
+      <span class="status__dot"></span><span class="status__text">Connecting&hellip;</span>
+    </span>
+    <span class="topbar__region">all regions &middot; read only</span>
+    <span class="topbar__user">{{ request.user }}</span>
+    <a href="{% url 'accounts:logout' %}" style="color: #b9c0c9">Sign out</a>
+  </header>
+
+  <div class="stack">
+
+    <div class="tiles">
+      <div class="tile">
+        <div class="tile__label">Emergency centres</div>
+        <div class="tile__value" id="t-centres">&ndash;</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Agents free</div>
+        <div class="tile__value tile__value--blue" id="t-agents">&ndash;</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Subjects transmitting</div>
+        <div class="tile__value tile__value--urgent" id="t-subjects">&ndash;</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Missions open</div>
+        <div class="tile__value" id="t-open">&ndash;</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Recently closed</div>
+        <div class="tile__value" id="t-closed">&ndash;</div>
+      </div>
+    </div>
+
+    <div class="banner" id="unrouted" hidden>
+      <div>
+        <div class="banner__title" id="unrouted-title"></div>
+        <p class="banner__text" id="unrouted-text"></p>
+      </div>
+    </div>
+
+    <div class="split">
+      <section class="card split__wide">
+        <div class="card__head">
+          <h2 class="card__title">All regions</h2>
+          <span class="card__note">{{ regions|join:", " }}</span>
+        </div>
+        <div id="root-map"></div>
+      </section>
+
+      <section class="card split__narrow">
+        <div class="card__head">
+          <h2 class="card__title">Centres</h2>
+        </div>
+        <ul class="rows" id="centres"></ul>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card__head">
+        <h2 class="card__title">Missions</h2>
+        <span class="card__note">open first, then the most recently closed</span>
+      </div>
+      <div class="table-wrap">
+        <table class="missions">
+          <thead>
+            <tr>
+              <th scope="col">Mission</th>
+              <th scope="col">Centre</th>
+              <th scope="col">Agent</th>
+              <th scope="col">Subject</th>
+              <th scope="col">Status</th>
+              <th scope="col">Outcome</th>
+            </tr>
+          </thead>
+          <tbody id="mission-rows"></tbody>
+        </table>
+      </div>
+      <p class="hint" style="padding: 11px 16px; margin: 0; border-top: 1px solid var(--faint)">
+        Read only. Dispatching belongs to the centre that owns the agent &mdash;
+        this view never decides, it only watches.
+      </p>
+    </section>
+
+  </div>
+</div>
+
+
+<!-- ************************ JavaScript /************************ -->
+<script>
+    var centerLat = {{ center_lat }};
+    var centerLng = {{ center_lng }};
+    var refreshTokenUrl = "{% url 'accounts:browser_token_refresh' %}";
+    var logoutUrl = "{% url 'accounts:logout' %}";
+
+    var rootPanelWS = "{% ws_url 'ws-root-panel' %}";
+
+    var subjectIconSrc = "{% static 'icons/subject.png' %}";
+    var agentIconSrc = "{% static 'icons/agent.png' %}";
+</script>
+
+<script src="{% static 'js/root.js' %}"></script>
+
+{% endblock %}

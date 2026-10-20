@@ -2,7 +2,8 @@ from django.contrib.auth.views import LoginView
 from django.urls import reverse_lazy
 from django.conf import settings
 from django.contrib.auth import logout
-from django.shortcuts import redirect
+from django.shortcuts import redirect, resolve_url
+from profiles.utils import ProfileType
 from django.views.generic import View
 from rest_framework import generics
 from rest_framework.response import Response
@@ -17,7 +18,23 @@ from accounts.permissions import AnyOnPost_AuthOnGet
 
 class CustomLoginView(LoginView):
     template_name = 'login.html'
-    success_url = reverse_lazy('agents:main')
+
+    def get_default_redirect_url(self):
+        """
+        Send each kind of account to the page it is actually allowed to open.
+
+        LOGIN_REDIRECT_URL points at the centre dashboard, which refuses a SUPER
+        account - so without this, signing in as root lands straight on a 403.
+
+        (LoginView ignores the success_url attribute that used to sit here: it
+        builds its own redirect from next_page or LOGIN_REDIRECT_URL.)
+        """
+        profile = getattr(self.request.user, 'profile', None)
+
+        if profile is not None and profile.type == ProfileType.SUPER:
+            return resolve_url('agent:root')
+
+        return super().get_default_redirect_url()
 
     def make_tokens(self, user) :
         refresh = RefreshToken.for_user(user)

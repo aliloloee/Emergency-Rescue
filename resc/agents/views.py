@@ -1,8 +1,10 @@
 from django.views.generic import TemplateView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.contrib.gis.db.models import Extent
 from django.http import HttpResponseForbidden, JsonResponse
 from django.utils.translation import gettext_lazy as _
 
+from agents.models import Region
 from profiles.models import Profile
 from profiles.utils import ProfileType
 
@@ -47,6 +49,43 @@ class MainBoard(LoginRequiredMixin, UserPassesTestMixin, TemplateView) :
     
     def test_func(self):
         return self.request.user.is_authenticated and self.request.user.profile.type == ProfileType.EMERGENCY_CENTER
+
+    def handle_no_permission(self):
+        return HttpResponseForbidden("You are not allowed to access this page.")
+
+
+class RootBoard(LoginRequiredMixin, UserPassesTestMixin, TemplateView) :
+    """
+    The administrator's system-wide view.
+
+    Gated to SUPER, which is the mirror of MainBoard's gate rather than a
+    widening of it: a root account cannot open the centre dashboard, and a
+    centre account cannot open this. The socket behind it enforces the same
+    split, so neither can be reached by going around the other.
+    """
+    template_name = "root.html"
+
+    def get_context_data(self, **kwargs) :
+        context = super().get_context_data(**kwargs)
+
+        # The map covers every region, so centre it on all of them together
+        # rather than on whichever happens to be first.
+        regions = Region.objects.all()
+        extent = regions.aggregate(area=Extent('polygon'))['area']
+
+        if extent :
+            context['center_lat'] = (extent[1] + extent[3]) / 2
+            context['center_lng'] = (extent[0] + extent[2]) / 2
+        else :
+            context['center_lat'] = 0
+            context['center_lng'] = 0
+
+        context['regions'] = [region.name for region in regions]
+        return context
+
+    def test_func(self):
+        return (self.request.user.is_authenticated
+                and self.request.user.profile.type == ProfileType.SUPER)
 
     def handle_no_permission(self):
         return HttpResponseForbidden("You are not allowed to access this page.")

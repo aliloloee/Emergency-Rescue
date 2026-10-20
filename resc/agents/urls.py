@@ -7,4 +7,5 @@ app_name = 'agents'
 urlpatterns = [
     path('dashboard/', views.MainBoard.as_view(), name='main'),
     path('dashboard/config/', views.js_config, name='js-config'),
+    path('root/', views.RootBoard.as_view(), name='root'),
 ]
