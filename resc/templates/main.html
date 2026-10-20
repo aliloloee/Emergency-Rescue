@@ -8,41 +8,96 @@
 
 {% block content %}
 <link rel="stylesheet" href="{% static 'css/awesome.markers.css' %}">
-<link rel="stylesheet" href="{% static 'css/main.css' %}">
 
+<div class="shell">
 
-<div id="left-panel">
-    <div id="map"></div>
-</div>
-<div id="right-panel">
-    <!-- Content for the right panel goes here -->
-    <h1>Right Panel</h1>
-    <p>This is the right panel content.</p>
-    <button id="myButton">Scan the region</button>
+  <header class="topbar">
+    <span class="topbar__brand">Emergency Rescue</span>
+    <span class="topbar__region">{{ request.user.profile.region }}</span>
+    <span class="topbar__spacer"></span>
+    <span class="status status--down" id="map-status">
+      <span class="status__dot"></span><span class="status__text">Connecting&hellip;</span>
+    </span>
+    <span class="topbar__user">{{ request.user }}</span>
+    <a href="{% url 'accounts:logout' %}">Sign out</a>
+  </header>
+
+  <div class="board">
+
+    <section class="card board__map">
+      <div class="card__head">
+        <h2 class="card__title">Region map</h2>
+        <span class="card__note">Agents of every centre are shown; only yours can be dispatched.</span>
+      </div>
+      <div id="map"></div>
+    </section>
+
+    <aside class="board__side">
+
+      <section class="card card--urgent">
+        <div class="card__head">
+          <h2 class="card__title">Possible missions</h2>
+          <span class="count" id="alert-count">0</span>
+          <span class="topbar__spacer"></span>
+          <span class="status status--down" id="panel-status">
+            <span class="status__dot"></span><span class="status__text">Connecting&hellip;</span>
+          </span>
+        </div>
+
+        <div id="alerts"></div>
+
+        <div class="card__body" id="alert-actions" hidden>
+          <h3 class="section-label" id="agents-label">Your agents, free</h3>
+          <ul class="agents" id="agents"></ul>
+          <p class="hint">
+            Agents belonging to another centre appear on the map but cannot be
+            dispatched from here.
+          </p>
+        </div>
+
+        <p class="toast" id="panel-error" hidden></p>
+
+        <div class="card__foot" id="alert-foot">
+          <button type="button" class="btn btn--primary" id="dispatch" disabled>Choose an agent</button>
+          <button type="button" class="btn" id="dismiss">Dismiss</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card__head">
+          <h2 class="card__title">Active missions</h2>
+          <span class="count" id="mission-count">0</span>
+        </div>
+        <div id="missions"></div>
+      </section>
+
+    </aside>
+  </div>
 </div>
 
 
 <!-- ************************ JavaScript /************************ -->
-<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 <script src="{% static 'js/awesome.markers.js' %}"></script>
 
 <script>
     var centerLat = {{ center_lat }};
     var centerLng = {{ center_lng }};
     var bounds = [
-        [{{ bounds.1 }}, {{ bounds.0 }}],  
-        [{{ bounds.3 }}, {{ bounds.2 }}]   
+        [{{ bounds.1 }}, {{ bounds.0 }}],
+        [{{ bounds.3 }}, {{ bounds.2 }}]
     ];
     var locations = {{ locations|safe }};
     var refreshTokenUrl = "{% url 'accounts:browser_token_refresh' %}";
     var logoutUrl = "{% url 'accounts:logout' %}";
 
     var centerRecieveWS = "{% ws_url 'ws-center-data' %}";
+    var centerPanelWS = "{% ws_url 'ws-center-panel' %}";
 
-    var subjectIconSrc = "{% static 'icons/subject.png' %}"
-    var agentIconSrc = "{% static 'icons/agent.png' %}"
+    var subjectIconSrc = "{% static 'icons/subject.png' %}";
+    var agentIconSrc = "{% static 'icons/agent.png' %}";
 </script>
 
 <script src="{% static 'js/main.js' %}"></script>
+<script src="{% static 'js/panel.js' %}"></script>
 
 {% endblock %}

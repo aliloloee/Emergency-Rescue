@@ -1,17 +1,38 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Login</title>
-</head>
-<body>
-    <h2>Login</h2>
-    <form method="post">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Login</button>
-    </form>
+{% extends "base.html" %}
+
+
+{% block title %}Sign in &middot; Emergency Rescue{% endblock %}
+
+
+{% block content %}
+<div class="login">
+  <div class="login__card">
+    <h1 class="login__title">Emergency Rescue</h1>
+    <p class="login__sub">Sign in to your emergency centre.</p>
+
     {% if form.errors %}
-        <p>Your username and password didn't match. Please try again.</p>
+      <p class="toast" style="margin: 0 0 16px">
+        That email and password did not match an account.
+      </p>
     {% endif %}
-</body>
-</html>
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="field">
+        <label for="{{ form.username.id_for_label }}">Email</label>
+        {{ form.username }}
+      </div>
+
+      <div class="field">
+        <label for="{{ form.password.id_for_label }}">Password</label>
+        {{ form.password }}
+      </div>
+
+      <button type="submit" class="btn btn--go" style="width: 100%; margin-top: 6px">
+        Sign in
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
