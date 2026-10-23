@@ -167,6 +167,10 @@ class Command(BaseCommand):
                         'type': 'mission_ack', 'mission_id': mission['id'],
                     }))
                     mission['driving'] = True
+                    # A second mission needs reporting too. If the agent is
+                    # already standing at the subject from the last one, there
+                    # is no distance left to drive and it reports straight away.
+                    mission['done'] = False
 
                 elif 'mission_closed' in message:
                     self._say('agent', 'the centre closed the mission', self.style.SUCCESS)
@@ -180,14 +184,17 @@ class Command(BaseCommand):
         threading.Thread(target=listen, daemon=True).start()
 
         step = 0
+        longitude, latitude = AGENT_PATH[0]
+
         while not self.stop.is_set():
+            # Only a mission moves the agent. Otherwise it holds wherever it is:
+            # a crew that has just finished a rescue is still standing at the
+            # subject, not back where it set off from.
             if mission['driving'] and step < len(AGENT_PATH):
                 longitude, latitude = AGENT_PATH[step]
                 step += 1
                 if step == len(AGENT_PATH):
                     self._say('agent', 'arrived at the subject')
-            else:
-                longitude, latitude = AGENT_PATH[0]
 
             try:
                 socket.send(json.dumps({

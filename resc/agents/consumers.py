@@ -594,15 +594,24 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
         alert = DistressAlert.objects.get(pk=alert_id)
         agent = Agent.objects.get(pk=agent_id)
         mission = services.create_mission(alert, agent, self.center)
-        return mission_payload(mission), mission.agent_id
+
+        # Re-read it: create_mission moved the alert to CONVERTED, and the
+        # panel has to be told, or it goes on offering a possible mission that
+        # has already become a real one.
+        alert = DistressAlert.objects.select_related('subject_device').get(pk=alert_id)
+
+        return mission_payload(mission), mission.agent_id, alert_payload(alert)
 
     async def handle_dispatch(self, message) :
-        payload, agent_pk = await self._dispatch(message['alert_id'], message['agent_id'])
+        payload, agent_pk, alert = await self._dispatch(
+            message['alert_id'], message['agent_id'],
+        )
 
         await self.channel_layer.group_send(
             agent_group_name(agent_pk),
             {'type': 'mission_assigned', 'value': payload},
         )
+        await publish_alert(self.channel_layer, self.center.pk, alert)
         await self.broadcast_mission(payload)
         await self.broadcast_roster()
 

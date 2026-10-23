@@ -781,6 +781,35 @@ class CenterPanelTests(ConsumerTestCase):
         self.assertEqual(backlog[0]['agent_name'], self.a_near.name)
         await self.close_sockets()
 
+    async def test_dispatching_tells_the_panel_the_alert_is_no_longer_open(self):
+        """
+        create_mission moves the alert to CONVERTED. If that is not published,
+        the panel goes on offering a possible mission that has already become a
+        real one - and when the subject's next episode raises a genuinely new
+        alert, the same device appears in the list twice.
+        """
+        panel = await self.connected(self.panel_for(self.centre_a))
+        await self.send_subject_reading()
+        alert = await self.await_message(panel, 'alert')
+        self.assertEqual(alert['status'], AlertStatus.ROUTED)
+
+        await panel.send_json_to({
+            'type': 'dispatch', 'alert_id': alert['id'], 'agent_id': self.a_near.pk,
+        })
+
+        # Read on until the alert comes back round as converted.
+        converted = None
+        for _ in range(6):
+            update = await self.await_message(panel, 'alert', timeout=2)
+            if update is None:
+                break
+            if update['id'] == alert['id'] and update['status'] == AlertStatus.CONVERTED:
+                converted = update
+                break
+
+        self.assertIsNotNone(converted, 'the panel was never told the alert was taken')
+        await self.close_sockets()
+
     async def test_the_mission_backlog_is_this_centres_only(self):
         other = await self.connected(self.panel_for(self.centre_b))
         self.assertEqual(await self.await_message(other, 'open_missions'), [])
