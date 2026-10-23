@@ -13,6 +13,13 @@ can be dispatched; a few seconds later the subject starts transmitting, which
 raises the alert. Then it waits for *you* to dispatch from the dashboard -
 missions are never created automatically. Once dispatched it acknowledges,
 drives to the subject and reports, leaving the mission for you to finalise.
+
+The subject stops transmitting at the moment of the rescue, because a subject
+device reads a person's vital signs: once they are out of the rubble and the
+device comes off, there is nothing left for it to read. A device still sending
+a pulse after a rescue would mean somebody is still wearing it and still in
+trouble, which is why the system treats that as a fresh alert rather than as
+noise to be suppressed.
 """
 import json
 import threading
@@ -81,6 +88,11 @@ class Command(BaseCommand):
         self.base = options['base'].rstrip('/')
         self.interval = options['interval']
         self.stop = threading.Event()
+
+        # A subject device reads a person's vital signs, so it has nothing to
+        # send once that person is out of the rubble and the device comes off.
+        # Set when the agent reports a rescue; the subject stops transmitting.
+        self.rescued = threading.Event()
 
         agent_device = self._device(AgentDevice, options['agent'], 'agent')
         subject_device = self._device(SubjectDevice, options['subject'], 'subject')
@@ -213,6 +225,9 @@ class Command(BaseCommand):
                     'mission_id': mission['id'],
                     'outcome': SUCCESS,
                 }))
+                # The subject is out, so the device comes off them and has no
+                # vital signs left to read.
+                self.rescued.set()
 
             time.sleep(self.interval)
 
@@ -224,7 +239,7 @@ class Command(BaseCommand):
                   self.style.ERROR)
 
         beat = 58
-        while not self.stop.is_set():
+        while not self.stop.is_set() and not self.rescued.is_set():
             try:
                 socket.send(json.dumps({
                     'lat': SUBJECT_AT[0],
@@ -237,5 +252,9 @@ class Command(BaseCommand):
 
             beat = 58 + (beat - 56) % 12
             time.sleep(self.interval)
+
+        if self.rescued.is_set():
+            self._say('subject', 'rescued - the device comes off and goes quiet',
+                      self.style.SUCCESS)
 
         socket.close()
