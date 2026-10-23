@@ -95,6 +95,9 @@
 
     var subjectIconSrc = "{% static 'icons/subject.png' %}";
     var agentIconSrc = "{% static 'icons/agent.png' %}";
+
+    // The map uses the server's own idea of how long a device stays "live".
+    var liveSeconds = {{ live_seconds }};
 </script>
 
 <script src="{% static 'js/main.js' %}"></script>

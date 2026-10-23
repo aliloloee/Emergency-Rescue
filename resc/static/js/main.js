@@ -148,31 +148,73 @@
   /*
    * One marker per device, moved rather than rebuilt. Recreating it on every
    * reading made the map flicker and slammed any open popup shut.
+   *
+   * Each entry remembers when it last heard from the device. A map that keeps
+   * markers for ever is worse than useless: a subject rescued ten minutes ago,
+   * or an agent whose radio died, looks exactly like one reporting right now.
    */
   var markers = {};
 
+  var STALE_AFTER = liveSeconds * 1000;
+  var GONE_AFTER = STALE_AFTER * 2;
+
   function showDevice(data) {
     var id = data.type + "-" + data.pk;
-    var marker = markers[id];
+    var entry = markers[id];
 
-    if (marker) {
-      marker.setLatLng([data.lat, data.lng]);
+    if (entry) {
+      entry.marker.setLatLng([data.lat, data.lng]);
     } else {
-      marker = L.marker([data.lat, data.lng], { icon: deviceIcons[data.type] });
-      marker.addTo(map);
-      markers[id] = marker;
+      entry = {
+        marker: L.marker([data.lat, data.lng], { icon: deviceIcons[data.type] }),
+      };
+      entry.marker.addTo(map);
+      markers[id] = entry;
     }
 
-    marker.bindPopup(
+    entry.at = Date.now();
+    entry.marker.setOpacity(1);
+    entry.marker.bindPopup(
       data.type === 0
         ? "<b>Subject device " + data.pk + "</b><br>" + data.heartrate + " bpm"
         : "<b>Agent device " + data.pk + "</b>"
     );
   }
 
+  function dropDevice(type, pk) {
+    var id = type + "-" + pk;
+    if (markers[id]) {
+      map.removeLayer(markers[id].marker);
+      delete markers[id];
+    }
+  }
+
+  /*
+   * Faded once the server would call the device offline, gone at twice that.
+   * The fade is the useful half: it says "this is where they were", which is
+   * worth knowing while an ambulance is still on its way to the spot.
+   */
+  function sweepStale() {
+    var now = Date.now();
+
+    Object.keys(markers).forEach(function (id) {
+      var age = now - markers[id].at;
+
+      if (age > GONE_AFTER) {
+        map.removeLayer(markers[id].marker);
+        delete markers[id];
+      } else if (age > STALE_AFTER) {
+        markers[id].marker.setOpacity(0.35);
+      }
+    });
+  }
+
+  window.setInterval(sweepStale, 5000);
+
   window.RESC = {
     connect: connect,
     wsBase: wsBase,
+    dropDevice: dropDevice,
     focusOn: function (lat, lng) {
       map.setView([lat, lng], Math.max(map.getZoom(), 16));
     },

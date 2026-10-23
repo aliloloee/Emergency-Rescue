@@ -452,6 +452,14 @@
 
     if (message.mission) {
       state.missions[message.mission.id] = message.mission;
+
+      // A rescued subject stops transmitting, because the device reads their
+      // vital signs and it has come off them. Take the marker away now rather
+      // than leaving it to age out - and if they are somehow still sending,
+      // the next reading puts it straight back, which is the right answer.
+      if (message.mission.status === MISSION.CLOSED && window.RESC) {
+        window.RESC.dropDevice(0, message.mission.subject_device_id);
+      }
     }
 
     if (message.error) {

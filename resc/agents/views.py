@@ -1,4 +1,5 @@
 from django.views.generic import TemplateView
+from django.conf import settings
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib.gis.db.models import Extent
 from django.http import HttpResponseForbidden, JsonResponse
@@ -44,6 +45,11 @@ class MainBoard(LoginRequiredMixin, UserPassesTestMixin, TemplateView) :
 
         extra_context['locations'] = locations
 
+        # The map uses the same idea of "live" the dispatcher does, so a marker
+        # cannot sit there looking current while the server has already written
+        # that device off as offline.
+        extra_context['live_seconds'] = settings.AGENT_LIVE_SECONDS
+
         context.update(extra_context)
         return context
     
@@ -81,6 +87,7 @@ class RootBoard(LoginRequiredMixin, UserPassesTestMixin, TemplateView) :
             context['center_lng'] = 0
 
         context['regions'] = [region.name for region in regions]
+        context['live_seconds'] = settings.AGENT_LIVE_SECONDS
         return context
 
     def test_func(self):

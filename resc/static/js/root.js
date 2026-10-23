@@ -78,18 +78,60 @@
 
   var markers = {};
 
-  function place(kind, pk, lat, lng, label) {
+  var STALE_AFTER = liveSeconds * 1000;
+  var GONE_AFTER = STALE_AFTER * 2;
+
+  function place(kind, pk, lat, lng, label, at) {
     if (lat === null || lat === undefined) {
       return;
     }
+
+    var id = kind + "-" + pk;
+    var entry = markers[id];
+
+    if (entry) {
+      entry.marker.setLatLng([lat, lng]);
+    } else {
+      entry = { marker: L.marker([lat, lng], { icon: icons[kind] }) };
+      entry.marker.addTo(map);
+      markers[id] = entry;
+    }
+
+    // The snapshot carries each device's own last_seen, which may already be
+    // old; a live reading is by definition now.
+    entry.at = at ? new Date(at).getTime() : Date.now();
+    entry.marker.setOpacity(1);
+    entry.marker.bindPopup(label);
+    ageOne(id);
+  }
+
+  function ageOne(id) {
+    var entry = markers[id];
+    if (!entry) {
+      return;
+    }
+
+    var age = Date.now() - entry.at;
+    if (age > GONE_AFTER) {
+      map.removeLayer(entry.marker);
+      delete markers[id];
+    } else if (age > STALE_AFTER) {
+      entry.marker.setOpacity(0.35);
+    }
+  }
+
+  function dropDevice(kind, pk) {
     var id = kind + "-" + pk;
     if (markers[id]) {
-      markers[id].setLatLng([lat, lng]);
-    } else {
-      markers[id] = L.marker([lat, lng], { icon: icons[kind] }).addTo(map);
+      map.removeLayer(markers[id].marker);
+      delete markers[id];
     }
-    markers[id].bindPopup(label);
   }
+
+  // A marker nobody has heard from is a lie about where somebody is.
+  window.setInterval(function () {
+    Object.keys(markers).forEach(ageOne);
+  }, 5000);
 
   // ------------------------------------------------------------- rendering --
 
@@ -281,10 +323,11 @@
     });
 
     state.agents.forEach(function (agent) {
-      place(1, agent.id, agent.lat, agent.lng, agent.name + " · " + agent.center);
+      place(1, agent.id, agent.lat, agent.lng,
+            agent.name + " · " + agent.center, agent.last_seen);
     });
     state.subjects.forEach(function (device) {
-      place(0, device.id, device.lat, device.lng, device.name);
+      place(0, device.id, device.lat, device.lng, device.name, device.last_seen);
     });
   }
 
@@ -316,6 +359,11 @@
       }
       if (message.mission) {
         state.missions[message.mission.id] = message.mission;
+
+        // Rescued subjects stop transmitting; take them off the map at once.
+        if (message.mission.status === MISSION.CLOSED) {
+          dropDevice(0, message.mission.subject_device_id);
+        }
       }
       if (message.device_data) {
         var d = message.device_data;
