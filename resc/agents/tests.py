@@ -757,6 +757,35 @@ class CenterPanelTests(ConsumerTestCase):
         self.assertEqual(error['code'], 'unknown_message')
         await self.close_sockets()
 
+    async def test_a_running_mission_is_sent_to_a_panel_that_connects_later(self):
+        """
+        A mission outlives the page it was dispatched from. Without the backlog
+        an operator who reloads sees nothing to finalise, the agent stays
+        committed, and the subject - who already has a mission - raises no new
+        alert either, so the centre is stuck with no way out.
+        """
+        first = await self.connected(self.panel_for(self.centre_a))
+        await self.send_subject_reading()
+        alert = await self.await_message(first, 'alert')
+        await first.send_json_to({
+            'type': 'dispatch', 'alert_id': alert['id'], 'agent_id': self.a_near.pk,
+        })
+        dispatched = await self.await_message(first, 'mission')
+        await self.close_sockets()
+
+        # A second operator, or the same one after a reload.
+        later = await self.connected(self.panel_for(self.centre_a))
+        backlog = await self.await_message(later, 'open_missions')
+
+        self.assertEqual([m['id'] for m in backlog], [dispatched['id']])
+        self.assertEqual(backlog[0]['agent_name'], self.a_near.name)
+        await self.close_sockets()
+
+    async def test_the_mission_backlog_is_this_centres_only(self):
+        other = await self.connected(self.panel_for(self.centre_b))
+        self.assertEqual(await self.await_message(other, 'open_missions'), [])
+        await self.close_sockets()
+
 
 class DispatchOverSocketsTests(ConsumerTestCase):
     """The whole cycle, driven the way a browser and a device would drive it."""

@@ -196,6 +196,23 @@ def open_alerts_for_center(emergency_center):
             .order_by('-last_seen'))
 
 
+def open_missions_for_center(emergency_center):
+    """
+    The missions this center still has to see through.
+
+    Needed for the same reason as the alert backlog: a mission outlives the
+    page it was dispatched from. Without this an operator who reloads, or who
+    comes on shift after the dispatch, cannot see the mission at all - and so
+    cannot finalise or call it off, which leaves the agent committed and the
+    subject unable to raise a new alert.
+    """
+    return (Mission.objects
+            .filter(emergency_center=emergency_center,
+                    status__in=MissionStatus.open_statuses())
+            .select_related('agent')
+            .order_by('created'))
+
+
 def dismiss_alert(alert, emergency_center):
     """Decline a possible mission. Only the center it was routed to may do so."""
     if alert.emergency_center_id != emergency_center.pk:

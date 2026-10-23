@@ -448,10 +448,13 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
 
         await self.accept()
         await self.send_unoccupied_agents()
-        # An alert raised while nobody was connected is still waiting to be
-        # decided, so an operator starts from the backlog rather than from
-        # whatever happens to arrive next.
+        # Work raised or started while nobody was connected is still waiting,
+        # so an operator starts from the backlog rather than from whatever
+        # happens to arrive next. Missions matter as much as alerts here: a
+        # mission outlives the page it was dispatched from, and one that cannot
+        # be seen cannot be finalised.
         await self.send_open_alerts()
+        await self.send_open_missions()
 
     async def disconnect(self, close_code=None):
         # connect() may have bailed out before the group was joined
@@ -485,6 +488,16 @@ class CenterPanelConsumer(JWTConsumerAuthMixin, AsyncWebsocketConsumer):
     async def send_open_alerts(self) :
         await self.send(text_data=json.dumps({
             'open_alerts': await self.get_open_alerts()
+        }))
+
+    @database_sync_to_async
+    def get_open_missions(self) :
+        return [mission_payload(mission)
+                for mission in services.open_missions_for_center(self.center)]
+
+    async def send_open_missions(self) :
+        await self.send(text_data=json.dumps({
+            'open_missions': await self.get_open_missions()
         }))
 
     @database_sync_to_async

@@ -133,8 +133,16 @@
     nodes.alertCount.className = alerts.length ? "count count--urgent" : "count";
 
     if (!alerts.length) {
+      // A subject already being rescued keeps transmitting but raises nothing,
+      // so "no subject is transmitting" would be a lie while a mission runs.
       nodes.alerts.appendChild(
-        el("p", "empty", "No subject is transmitting.")
+        el(
+          "p",
+          "empty",
+          openMissions().length
+            ? "No new alerts. A rescue is already under way."
+            : "No subject is transmitting."
+        )
       );
       return;
     }
@@ -404,6 +412,12 @@
     if (message.open_alerts) {
       message.open_alerts.forEach(function (alert) {
         state.alerts[alert.id] = alert;
+      });
+    }
+
+    if (message.open_missions) {
+      message.open_missions.forEach(function (mission) {
+        state.missions[mission.id] = mission;
       });
     }
 
