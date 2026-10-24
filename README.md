@@ -1,106 +1,154 @@
 # **Emergency Rescue Platform**
 
-## **Project Status** 🚧
-**Currently in development**  
-This project is actively being improved and expanded. New features and enhancements are in progress — see the [Roadmap](#roadmap) for what works today, what is being built, and what has deliberately been left for later.
+A disaster-response backend for finding and reaching people trapped under rubble.
+
+Wearable devices on trapped subjects transmit their location and vital signs. The system
+works out who can reach them fastest, puts that decision in front of a human at the right
+emergency centre, and follows the rescue through to the end — live, over WebSockets.
+
+Built with Django, GeoDjango/PostGIS, Django Channels, Redis and Celery.
 
 ---
 
-## **Project Description**
-The **Emergency Rescue Platform** is a backend system designed to support disaster response efforts by identifying and rescuing individuals trapped under rubble (e.g., post-earthquake scenarios). The platform integrates with custom devices capable of transmitting critical information, such as location and vital signs, even under rubble. This data is processed and routed to the emergency center best placed to respond, to facilitate timely rescue operations.
+## **Table of contents**
+
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [Architecture](#architecture)
+- [Getting started](#getting-started)
+- [Seeing it work](#seeing-it-work)
+- [Running the tests](#running-the-tests)
+- [Project layout](#project-layout)
+- [Design notes](#design-notes)
+- [Roadmap and known limitations](#roadmap-and-known-limitations)
+- [License](#license)
 
 ---
 
-## **How It Works**
-1. **Data Transmission**:  
-   Custom devices broadcast signals containing:
-   - Location data (latitude and longitude).
-   - Vital signs (e.g., heart rate).
+## **What it does**
 
-2. **Data Processing**:  
-   Readings arrive over WebSockets, are buffered in Redis, and are written to a geospatial database in batches by a background worker.
+After an earthquake, a subject's device starts transmitting. From that moment:
 
-3. **Dispatch**:  
-   The system finds the nearest free rescue agent and alerts the emergency center that owns it, presenting a *possible mission* alongside that center's own agents ranked by distance. A person at the center decides — missions are never created automatically.
+1. The reading **is** the distress signal — there is no separate alarm to raise.
+2. The system finds the **nearest free rescue agent** and alerts the emergency centre that
+   owns that agent. Routing follows the agent rather than the centre, because what matters
+   is who can get there, not whose office is closest.
+3. That centre sees a **possible mission**: who is in trouble, where, their heart rate, and
+   its own agents ranked by distance. **A person decides.** Missions are never created
+   automatically.
+4. The agent's device **acknowledges** the assignment — that is what starts the mission and
+   begins recording their track.
+5. The agent **reports** the outcome; the centre then **finalises** it. Two separate steps,
+   so "the agent says it worked" and "the centre agrees" stay distinct facts.
 
-4. **Real-Time Updates**:  
-   The agent's device acknowledges the assignment and later reports the outcome, which the center then finalises. Emergency centers follow every device and every mission as it happens.
+An administrator has a separate, read-only view of every centre, agent, subject and mission
+across all regions.
 
 ---
 
-## **How to Run the Project**
+## **How it works**
 
-### **Configuring the `.env` File**
+### **The rules the system actually enforces**
 
-To run the project, you need to create a `.env` file from the provided `.env.example` file. This file contains essential configuration keys required by the application. Follow these steps:
+These are the decisions that shape the code, and they are enforced in the service layer
+rather than left to the interface:
 
-1. **Create the `.env` File**:  
-   Copy the `.env.example` file to a new file named `.env`:  
-   ```bash
-   cp .env.example .env
-   ```
+| Rule | Why |
+| --- | --- |
+| A subject device only transmits during a disaster | Transmission is itself the distress signal; no thresholds, no triage rules |
+| An agent device always transmits, but is only *recorded* while on a mission | Agents stay visible on the map without filling the database with idle driving |
+| An agent belongs to exactly one centre, and only that centre may dispatch it | A centre is never offered an agent it cannot send |
+| The centre owning the nearest free agent is alerted — and only that one | Not a race between centres, which would optimise for who answers fastest rather than who is closest |
+| Missions are never created automatically | A rescue is a human decision |
+| A mission starts when the device acknowledges, not when it is created | An assignment nobody received has not started |
+| Completion is two-phase: the agent reports, the centre closes | The centre may disagree with the report |
 
-2. **Set the Configuration Keys**:
-    `SECRET_KEY`:
-    Add a secret key for your Django application. You can generate one using an online tool
-    ```bash
-    SECRET_KEY=your_secret_key_here
-    ```
-    `DEBUG`:
-    Set this to True for development mode or False for production
-    ```bash
-    DEBUG=True
-    ```
+### **The lifecycle**
 
-3. **PostgreSQL Configuration**:
-    Provide the database credentials for PostgreSQL:
-    ```bash
-    NAME=your_database_name
-    USER=your_database_user
-    PASSWORD=your_database_password
-    HOST=your_database_host
-    PORT=5432  # Default PostgreSQL port
-    ```
+```
+subject device transmits
+  -> DistressAlert raised (deduplicated per device: later readings refresh it)
+  -> routed to the centre owning the nearest free agent
+  -> centre picks one of ITS agents          => Mission, JUST_DEFINED
+  -> agent's device acknowledges             => IN_PROGRESS, recording starts
+  -> agent reports an outcome                => REPORTED
+  -> centre finalises                        => CLOSED, agent released
 
-4. **Redis Configuration**:
-    Set the Redis host name or IP address:
-    ```bash
-    REDIS_HOST=your_redis_host
-    ```
+at any point before the agent reports, the centre may instead call it off:
+  -> centre aborts   => CLOSED, outcome ABORTED, agent released, and the alert
+                        returns to the queue, because the subject is still trapped
+```
 
-5. **Django Superuser Configuration**:
-    Define the default superuser's details (you can change these values as needed):
-    ```bash
-    DJANGO_SUPERUSER_EMAIL=admin@admin.com
-    DJANGO_SUPERUSER_FIRSTNAME=Admin
-    DJANGO_SUPERUSER_LASTNAME=Admin
-    DJANGO_SUPERUSER_PASSWORD=123
-    ```
+Two consequences worth knowing:
 
-6. **Docker Volumes**:
-    Specify the names of the Docker volumes used for PostgreSQL data and static files. Use the same names provided here to ensure compatibility with the default `docker-compose` commands:
-    ```bash
-    DOCKER_VOLUME1=pgdata
-    DOCKER_VOLUME2=static_volume
-    ```
+- **A reading from a subject who already has a mission raises nothing.** They are still
+  trapped and still transmitting, but a centre must not be re-alerted about someone already
+  being helped.
+- **An alert that cannot be routed waits rather than failing.** If no agent is free anywhere
+  in the region, the alert stays unrouted and the device's *next* reading tries again. No
+  scheduler, no retry queue — the device is already the heartbeat.
 
-7. **Django Settings Module**:
-    Set this key to switch between development and production environments:
+---
 
-    Use **resc.settings.development** for development mode, where all services (database, Redis, Django, Celery, etc.) are run manually.
+## **Architecture**
 
-    Use **resc.settings.production** for production mode, where `docker-compose` can be used to start all services quickly.
+### **Data flow**
 
-    ```bash
-    DJANGO_SETTINGS_MODULE=resc.settings.development
-    ```
-    ```bash
-    DJANGO_SETTINGS_MODULE=resc.settings.production
-    ```
+```
+ device ──WebSocket──> Channels consumer ──> Redis list ──> Celery ──> PostGIS
+                              │                                    (batched history)
+                              ├──> last_location / last_seen  (one row, overwritten:
+                              │                                this is what "nearest" reads)
+                              └──> region group ──> every centre's live map
+```
 
-A sample `.env` file:
+Readings are buffered in Redis and written in batches of a hundred, so a burst of traffic
+does not become a burst of database writes. But a batch that lands every hundredth reading
+cannot answer *"where is this device now"*, so each reading also overwrites a single
+`last_location` column — and that is what the nearest-agent query reads.
+
+### **WebSocket endpoints**
+
+| Path | Who connects | Direction |
+| --- | --- | --- |
+| `ws/subject/send/` | A subject's device | Device → server |
+| `ws/agent/send/` | An agent's device | Both — telemetry up, assignments down |
+| `ws/center/recieve/` | A centre's map | Server → browser |
+| `ws/center/panel/` | A centre's dispatch panel | Both — alerts and missions down, decisions up |
+| `ws/root/panel/` | An administrator | Server → browser, read only |
+
+Devices authenticate with an API key in a `device: Resc <key>` header. Browsers authenticate
+with a JWT held in an HTTP-only cookie, refreshed transparently when it expires.
+
+### **Pages**
+
+| Path | Who |
+| --- | --- |
+| `/account/login/` | Everyone |
+| `/agent/dashboard/` | Emergency centres — map and dispatch panel |
+| `/agent/root/` | Administrators (`SUPER` profiles) — system-wide, read only |
+| `/admin/` | Django admin, with Leaflet map widgets |
+| `/docs/` | Swagger for the REST endpoints |
+
+Signing in sends each account to the page it is allowed to open; the two panels refuse each
+other's accounts.
+
+---
+
+## **Getting started**
+
+Docker is the quickest path and needs nothing installed but Docker itself.
+
+### **1. Configure `.env`**
+
 ```bash
-SECRET_KEY=
+cp .env.example .env
+```
+
+You only need to fill in `SECRET_KEY`. A working file looks like this:
+
+```bash
+SECRET_KEY=<generate one>
 DEBUG=True
 NAME=rescue
 USER=postgres
@@ -115,194 +163,217 @@ DJANGO_SUPERUSER_PASSWORD=123
 DOCKER_VOLUME1=pgdata
 DOCKER_VOLUME2=static_volume
 DJANGO_SETTINGS_MODULE=resc.settings.production
-
 ```
-You only have to add the `SECRET_KEY` here.
 
-### **Running the Application in Production Mode (with Docker)**
+| Key | Meaning |
+| --- | --- |
+| `SECRET_KEY` | Django's secret key — generate your own |
+| `DEBUG` | `True` for development, `False` otherwise |
+| `NAME` / `USER` / `PASSWORD` / `HOST` / `PORT` | PostgreSQL connection |
+| `REDIS_HOST` | Redis hostname (`ram` is the compose service name) |
+| `DJANGO_SUPERUSER_*` | Used once, at first start, to create an admin |
+| `DOCKER_VOLUME1` / `DOCKER_VOLUME2` | Volume names; keep these to match the compose file |
+| `DJANGO_SETTINGS_MODULE` | `resc.settings.production` for Docker, `resc.settings.developement` otherwise |
 
-This mode is recommended if you want to quickly run the project and see the app in action. To run the app in production mode, you need to have Docker and Docker Compose installed, along with the required Docker images specified in the `docker-compose.yml` file.
+> **Two things that will bite you.** The development settings module is spelled
+> `developement` — the misspelling is the real module name. And the file must have **no
+> byte-order mark**: with one, `SECRET_KEY` is not found and the image fails to build.
+> (Windows PowerShell's `Set-Content -Encoding utf8` adds one.)
 
-Follow these steps to set up the app:
+### **2. Start it**
 
-1. **Create Docker Volumes and Networks**:
-    Create the required Docker volumes for data and static files, as well as a network for the app:
-    ```bash
-    docker volume create pgdata
-    docker volume create static_volume
-    docker network create app-network
-    ```
+```bash
+docker volume create pgdata
+docker volume create static_volume
+docker network create app-network
 
-2. **Start Docker Compose**:
-    Build and start the services using Docker Compose:
-    ```bash
-    docker-compose up --build -d
-    ```
+docker-compose up --build -d
+```
 
-3. **Optional but Recommended Commands**:
-    Flush the Database (except Superuser): To clear the database while keeping the superuser, use the following command
-    ```bash
-    docker-compose exec web python /app/resc/manage.py flush_except_superuser
-    ```
-    Load Fixtures: To load initial data into the database, run the following command, replacing `data_new.json` with the fixture file you want to load
-    ```bash
-    docker-compose exec web python /app/resc/manage.py load_my_data data_new.json --exclude contenttypes
-    ```
+Five services come up: PostgreSQL/PostGIS, Redis, Django under daphne, a Celery worker and
+nginx. The app is at **http://localhost/**.
 
-### **Running the Application in Development Mode**
+### **3. Load the demo data**
 
-Running the application in development mode is recommended for those who wish to modify or expand its functionality. In this mode, you must manually configure and start each service individually.
+```bash
+docker-compose exec web python /app/resc/manage.py load_my_data data_new.json --exclude contenttypes
+```
 
-1. **Configure PostgreSQL with PostGIS Extension**:  
-   As the application utilizes GeoDjango, it is necessary to create the `PostGIS` extensions for your PostgreSQL database.
+That gives you the region of **Bologna**, two emergency centres, seven agents with devices,
+and five subject devices.
 
-   - **For Windows Users**: Ensure that the GDAL library is correctly configured, as it is required for GeoDjango. Detailed instructions can be found in this [Guide](https://medium.com/@limeira.felipe94/gdal-configuration-and-installation-on-windows-for-django-projects-538171db5ccc).
-
-2. **Initialze Redis Database**
-
-3. **Run the Django Application**:  
-   Ensure you have installed a tool for creating isolated Python environments. We recommend using `virtualenv`, which can be installed using the following command:  
-   ```bash
-   pip install virtualenv
-   ```
-
-    - **Create the Virtual Environment**:
-        ```bash
-        virtualenv venv
-        ```
-    - **Install the Requirements**:
-        ```bash
-        pip install -r requirements.txt
-        ```
-    - **Activate the virtual environment**:
-        For windows users:
-        ```bash
-        .\venv\Scripts\Activare
-        ```
-        For linux users:
-        ```bash
-        source venv/bin/activate
-        ```
-    - **Run the App**:
-        Navigate to the directory containing the *manage.py* file and execute:
-        ```bash
-        python manage.py runserver
-        ```
-
-4. **Run the Celery Application**:
-    In another terminal, activate the virtual environment and navigate to the directory containing the *manage.py* file.
-    For windows users:
-    ```bash
-    celery -A resc worker -l info --pool=solo
-    ```
-    For linux users:
-    ```bash
-    celery -A resc worker --loglevel=info
-    ```
-
-5. **Optional but Recommended Commands**:
-    Flush the Database (except Superuser): To clear the database while keeping the superuser, use the following command
-    ```bash
-    python manage.py flush_except_superuser
-    ```
-    Load Fixtures: To load initial data into the database, run the following command, replacing `data_new.json` with the fixture file you want to load
-    ```bash
-    python manage.py load_my_data data_new.json --exclude contenttypes
-    ```
-
----
-
-## **What you will see**
-
-If you have done everything correctly, in *production* mode the base url will be *http://localhost/* and in *developement* mode, *http://localhost:8000/*.
-
-### **Admin page**:
-
-When the application is up and running, you can go to the url */admin/* and log into the admin panel. If you have done the recommended loading of fixtures, you can expect to see the admin panel as below:
-
-> **A note on the admin credentials.** The superuser described in your `.env` is created by the `init_admin` command, which only runs when the user table is empty — and it runs at container start, *before* you load the fixtures. Loading `data_new.json` then replaces the user rows, so that superuser no longer exists. If you loaded the fixtures, create an admin account for yourself with:
+> **The admin account.** `init_admin` creates the superuser from your `.env`, but only when
+> the user table is empty — and it runs at container start, *before* you load the fixtures.
+> Loading them replaces the user rows, so that account no longer exists. Make yourself one:
 >
 > ```bash
 > docker-compose exec web python /app/resc/manage.py createsuperuser
 > ```
->
-> If you skip the fixtures, the `.env` credentials work exactly as described above.
 
-![Admin Panel](./readme/admin/overview.png "Admin Panel")
-Admin Panel
+### **Running without Docker**
 
+For working on the code. You will need Python 3.10, PostgreSQL with PostGIS, and Redis
+running locally.
 
-![Instance Added by Fixture to SubjectDevice Model](./readme/admin/subject-device-instance.png "Instance Added by Fixture to SubjectDevice Model")
-Instance added by fixture to SubjectDevice model
+GeoDjango needs GDAL. On Windows that is the fiddly part —
+[this guide](https://medium.com/@limeira.felipe94/gdal-configuration-and-installation-on-windows-for-django-projects-538171db5ccc)
+covers it.
 
-![Details of a SubjectDevice Instance](./readme/admin/subject-device-details.png "Details of a SubjectDevice Instance")
-Details of a SubjectDevice Instance
+```bash
+python -m venv venv
+source venv/bin/activate          # Windows: .\venv\Scripts\activate
+pip install -r requirements.txt
 
-### **Emergency Center Dashboard**
+# in .env: DJANGO_SETTINGS_MODULE=resc.settings.developement
+cd resc
+python manage.py migrate
+python manage.py runserver
+```
 
-The Emergency Center Dashboard allows emergency centers to monitor all operations in real-time. This includes data sent by the devices of agents (e.g., ambulances) and subjects in need of help (e.g., individuals under rubble).  
+Celery in a second terminal:
 
-To view how data is monitored:  
-1. Navigate to the login page at `account/login/`.  
-2. Log in using the following credentials:  
-   - **Username:** emergency-center1@resc.com  
-   - **Password:** 123  
-3. After logging in, you will be redirected to a real-time map of the city of **Bologna** at `agent/dashboard/`. This dashboard provides a comprehensive overview of all monitored activities and locations.
+```bash
+celery -A resc worker -l info              # Windows: add --pool=solo
+```
 
-<figure>
-  <img src="./readme/dashboard/icons/agent.png" alt="Alt text" width="50">
-  <figcaption>Icon used for Agents</figcaption>
-  <br>
-  <img src="./readme/dashboard/icons/subject.png" alt="Alt text" width="50">
-  <figcaption>Icon used for Subjects</figcaption>
-  <br>
-  <img src="./readme/dashboard/icons/star.png" alt="Alt text" width="50">
-  <figcaption>Icon used for Emergency-Centers</figcaption>
-</figure>
-
-To simulate the functionality of the devices, two scripts have been created and are located in the `communication-scripts` folder:  
-- One script mimics the devices used by agents (e.g., ambulances).  
-- The other script mimics the devices used by subjects in need of assistance (e.g., individuals under rubble).  
-
-These scripts communicate directly with the backend system, emulating real-world data transmission. The `GIF` below demonstrates what the user *Emergency-center 1* sees on their dashboard panel. 
-
-![Details of a SubjectDevice Instance](./readme/dashboard/ezgif.com-speed.gif "Details of a SubjectDevice Instance")
+The app is then at **http://localhost:8000/**.
 
 ---
 
-## **Roadmap**
+## **Seeing it work**
 
-### **Working today**
+### **The quickest way**
 
-- **Device telemetry.** Subject and agent devices stream location (and, for subjects, heart rate) over WebSockets, authenticated per device with an API key. Readings are buffered in Redis and written to PostgreSQL in batches by a Celery worker, so a burst of traffic does not become a burst of database writes.
-- **Live regional map.** An emergency center sees every device in its own region move in real time, over a Django Channels feed scoped to that region.
-- **Authentication and authorisation.** Devices authenticate with an API key; browsers with a JWT held in an HTTP-only cookie, refreshed transparently. A center can only ever subscribe to its own region, and only accounts of the emergency-center type can subscribe at all.
-- **Agent availability feed.** A separate socket publishes which agents are free, so a dispatch panel can be built against it.
+A management command plays both devices and walks a whole rescue, so you can watch the
+dashboard while it happens. It needs nothing installed.
 
-### **In progress — automated dispatch**
+Sign in at **http://localhost/account/login/** as `emergency-center1@resc.com` / `123`, then:
 
-The feature this platform exists for: turning a distress signal into a rescue.
+```bash
+docker-compose exec web python /app/resc/manage.py simulate
+```
 
-A subject device only transmits when something has gone wrong, so transmission *is* the distress signal. The system finds the nearest free rescue agent, and alerts **the emergency center that owns that agent** — routing follows the agent rather than the center, because the point is to reach the subject quickly. That center sees a *possible mission*, together with its own available agents ranked by distance, and a human decides. Missions are never created automatically.
+Watch the browser:
 
-Once an agent is assigned, their device acknowledges the assignment, which is what puts the mission in progress and starts recording their track. When the work is done the agent reports the outcome, and the center then finalises the mission — two separate steps, so that "the agent says it worked" and "the center agrees" stay distinct facts.
+| When | What happens |
+| --- | --- |
+| immediately | An agent appears on the map and holds position |
+| after ~8s | A subject starts transmitting — **Possible missions** turns to 1 |
+| | Click the alert: the map centres on it, your agents re-sort nearest-first with distances |
+| | Pick an agent, click **Dispatch** — the agent leaves the roster |
+| ~2s later | **In progress**: that is the device acknowledging |
+| ~90s | The agent drives to the subject, then **Reported** |
+| | Choose success or failure and **Finalise** — the agent returns to the roster |
 
-**Status:** the domain rules are implemented and covered by 42 tests — nearest-agent ranking, alert deduplication and routing, mission creation with ownership checks, and the full lifecycle including a center's ability to call a mission off. What remains is connecting them to the WebSocket layer and building the panels.
+The command prints what each device is doing, so you can follow the terminal against the
+screen. `Ctrl-C` stops it.
 
-### **Planned**
+Useful flags: `--delay` (how long before the subject starts), `--interval` (seconds between
+readings), `--subject` / `--agent` (device names).
 
-- **Emergency center dispatch panel** — the possible-mission list, ranked agents, and the dispatch and finalise controls.
-- **Root panel** — a system-wide view, for an administrator rather than a single center, of all centers, agents, subjects and missions.
-- **A downlink to agent devices**, so assignments can be pushed to them and acknowledged.
-- **Updated simulation notebooks**, so the scripts in `communication-scripts/` can acknowledge assignments and report outcomes.
+### **Driving the devices by hand**
 
-### **Known limitations**
+`communication-scripts/` holds two Jupyter notebooks, one per device type, which do the same
+thing interactively. They need Python and Jupyter locally. **Run the agent notebook first** —
+an agent that has not reported a position recently counts as offline and cannot be
+dispatched, so the alert would have nowhere to go.
 
-Deliberate scope choices for a first version, listed so they are not mistaken for oversights:
+### **The administrator's view**
 
-- **No escalation when a center does not respond.** An alert routed to a center stays there; nothing times out or reassigns it. (A mission a center explicitly *calls off* does return the subject to the routing queue.)
-- **No acknowledgement timeout.** If an agent's device never acknowledges, the mission stays open until a human intervenes.
-- **Ranking is straight-line distance**, not travel time, so the nearest agent as the crow flies may not be the quickest to arrive.
-- **Dismissing an alert does not silence the device.** If a center dismisses a false alarm and the device keeps transmitting, a new alert is raised — correct for a long rescue, unhelpful for a false alarm.
-- **Heart rate is recorded and displayed but not acted on.** It does not yet influence triage or prioritisation.
-- **The Redis client in the consumers is synchronous.** Fine at demonstration scale; a production deployment would want `redis.asyncio` so that buffering cannot block the event loop.
+Sign in as a `SUPER` profile and you land on **/agent/root/**: every centre, every agent,
+every mission, and — the thing only this view shows — alerts that could not be routed to
+anybody because no agent was free.
+
+---
+
+## **Running the tests**
+
+```bash
+docker-compose exec web python /app/resc/manage.py test agents
+```
+
+73 tests, covering the dispatch rules directly and the WebSocket layer through Channels'
+`WebsocketCommunicator` — no browser and no running server needed.
+
+They pin the things that would be expensive to get wrong: that distances come back in metres
+rather than degrees, that an alert follows the nearest *agent* rather than the nearest
+centre, that repeated readings refresh one alert instead of raising dozens, that a centre
+cannot touch another centre's agent or mission, that reporting does not close a mission, and
+that both WebSocket close codes mean what the frontend thinks they mean.
+
+---
+
+## **Project layout**
+
+```
+resc/
+├── accounts/     custom user model, JWT-in-cookie login
+├── agents/       the domain: devices, alerts, missions, consumers, dispatch rules
+│   ├── services.py    every dispatch rule, as plain functions over the database
+│   ├── consumers.py   the five WebSocket endpoints
+│   └── tests.py       73 tests
+├── profiles/     profile ↔ region ↔ location ↔ type
+├── resc/         settings (base / developement / production), asgi, celery
+├── static/       dashboard JavaScript and CSS
+└── templates/
+
+communication-scripts/   device simulators as notebooks
+```
+
+The rules live in `agents/services.py` and know nothing about WebSockets, which is why they
+can be tested directly and why the consumers stay thin.
+
+---
+
+## **Design notes**
+
+A few decisions that are not obvious from the code:
+
+**Distances are measured in metres, not degrees.** The location columns are PostGIS
+`geography`. At plain SRID 4326 the distance functions return degrees, which looks plausible
+and is wrong in a way a city-sized demo would never reveal.
+
+**State is derived, not flagged.** "Is this agent on a mission" is answered by the mission
+table and enforced by a partial unique constraint, rather than by a boolean somebody has to
+remember to reset. The same applies to subjects: one open mission per subject device is a
+database constraint, not a field.
+
+**4001 and 4005 are different refusals.** A WebSocket closed with 4001 means "your token is
+stale" and the browser refreshes and retries. 4005 means "this account, never" — retrying
+would loop for ever. Also: a close code cannot be delivered on a connection that was never
+accepted, so the consumers accept *then* close.
+
+**The map shows what is live.** A marker fades once the server would consider that device
+offline and disappears shortly after, using the same threshold the dispatcher uses. A rescued
+subject's marker goes immediately — the device reads vital signs, so once it comes off them
+there is nothing left to read.
+
+---
+
+## **Roadmap and known limitations**
+
+The workflow is complete end to end: telemetry, alerting, routing, dispatch, acknowledgement,
+reporting, finalising, and both dashboards.
+
+What follows is deliberately out of scope for a first version, listed so it is not mistaken
+for oversight:
+
+- **No escalation when a centre does not respond.** An alert routed to a centre stays there;
+  nothing times out or reassigns it. A mission a centre explicitly *calls off* does return
+  the subject to the routing queue.
+- **No acknowledgement timeout.** If a device never acknowledges, the mission stays open
+  until a human calls it off.
+- **Ranking is straight-line distance**, not travel time. The nearest agent as the crow flies
+  is not always the quickest to arrive.
+- **Dismissing an alert does not silence the device.** A device still transmitting raises a
+  new alert — right for a long rescue, tedious for a false alarm.
+- **Heart rate is carried and displayed but not acted on.** It does not influence triage.
+- **The Redis client in the consumers is synchronous.** Fine at demonstration scale; a
+  production deployment would want `redis.asyncio` so buffering cannot block the event loop.
+- **One region.** Nothing assumes a single region, but the fixture only has Bologna.
+
+---
+
+## **License**
+
+MIT — see [LICENSE](./LICENSE).
